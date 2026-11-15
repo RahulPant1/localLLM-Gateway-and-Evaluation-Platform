@@ -7,15 +7,16 @@ from typing import Annotated, Literal
 import httpx2
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from llm_gateway import __version__
+from llm_gateway.api import router as runs_router
 from llm_gateway.catalog import ModelCatalog
-from llm_gateway.config import Settings, get_settings
-from llm_gateway.execution import ExecutionQueue, ExecutionRecord, QueueState
+from llm_gateway.config import PROJECT_ROOT, Settings, get_settings
+from llm_gateway.execution import ExecutionQueue, QueueState
 from llm_gateway.providers.base import (
     GenerationFailed,
-    GenerationRequest,
     GenerationTimeout,
     LoadedModel,
     ModelInfo,
@@ -25,6 +26,8 @@ from llm_gateway.providers.base import (
     ProviderUnavailable,
 )
 from llm_gateway.providers.ollama import OllamaProvider
+from llm_gateway.runner import Runner
+from llm_gateway.store import Store
 from llm_gateway.system import Environment, GpuStatus, detect_environment, gpu_status
 
 
@@ -72,6 +75,8 @@ class StatusResponse(BaseModel):
     evaluator: EvaluatorStatus
 
 
+FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
+
 ERROR_STATUS: dict[type[ProviderError], int] = {
     ModelNotFound: 404,
     GenerationTimeout: 504,
@@ -98,29 +103,39 @@ CatalogDep = Annotated[ModelCatalog, Depends(get_catalog)]
 QueueDep = Annotated[ExecutionQueue, Depends(get_queue)]
 
 
-def create_app(provider: ModelProvider | None = None) -> FastAPI:
-    """Build the app. Tests pass a fake `provider`; otherwise Ollama is used."""
+def create_app(provider: ModelProvider | None = None, settings: Settings | None = None) -> FastAPI:
+    """Build the app. Tests pass a fake `provider` and explicit `settings`."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        config = settings or get_settings()
         client = None
         active = provider
         if active is None:
-            settings = get_settings()
-            client = httpx2.AsyncClient(base_url=settings.ollama_url)
+            client = httpx2.AsyncClient(base_url=config.ollama_url)
             active = OllamaProvider(
                 client,
-                default_num_ctx=settings.default_num_ctx,
-                generation_timeout_seconds=settings.generation_timeout_seconds,
+                default_num_ctx=config.default_num_ctx,
+                generation_timeout_seconds=config.generation_timeout_seconds,
             )
+        store = Store(config.database_path)
+        # Anything still queued or running belongs to a process that has gone.
+        store.fail_unfinished()
         app.state.provider = active
         app.state.catalog = ModelCatalog(active)
         app.state.queue = ExecutionQueue(active)
+        app.state.store = store
+        app.state.runner = Runner(store, active, app.state.catalog, app.state.queue)
         yield
+        await app.state.runner.shutdown()
+        store.close()
         if client is not None:
             await client.aclose()
 
     app = FastAPI(title="Local LLM Gateway", version=__version__, lifespan=lifespan)
+    if settings is not None:
+        app.dependency_overrides[get_settings] = lambda: settings
+    app.include_router(runs_router)
 
     @app.exception_handler(ProviderError)
     async def provider_error(_: Request, exc: ProviderError) -> JSONResponse:
@@ -158,15 +173,6 @@ def create_app(provider: ModelProvider | None = None) -> FastAPI:
             ],
         )
 
-    @app.post("/api/generate")
-    async def generate(
-        body: GenerationRequest, catalog: CatalogDep, queue: QueueDep
-    ) -> ExecutionRecord:
-        """Run one prompt on one named model. Phase 2 replaces this with the
-        persisted request flow."""
-        model = await catalog.get(body.model)
-        return await queue.run(body, model)
-
     @app.get("/api/status")
     async def status(
         settings: SettingsDep, provider: ProviderDep, queue: QueueDep
@@ -193,6 +199,10 @@ def create_app(provider: ModelProvider | None = None) -> FastAPI:
                 configured=settings.evaluator_configured, judge_model=settings.judge_model
             ),
         )
+
+    # The built frontend, if present. Registered last so /api routes win.
+    if FRONTEND_DIST.is_dir():
+        app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
 
     return app
 

@@ -4,7 +4,7 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from llm_gateway.config import Settings, get_settings
+from llm_gateway.config import Settings
 from llm_gateway.main import create_app
 from llm_gateway.providers.base import (
     GenerationRequest,
@@ -91,8 +91,7 @@ def make_client(tmp_path, provider, request):
     def _make(**overrides) -> TestClient:
         overrides.setdefault("database_path", tmp_path / "test.db")
         settings = Settings(_env_file=None, **overrides)
-        app = create_app(provider=provider)
-        app.dependency_overrides[get_settings] = lambda: settings
+        app = create_app(provider=provider, settings=settings)
         client = TestClient(app)
         client.__enter__()  # runs the app's startup
         request.addfinalizer(lambda: client.__exit__(None, None, None))

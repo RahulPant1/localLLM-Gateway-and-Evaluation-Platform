@@ -1,6 +1,6 @@
 # Architecture and Agreed Decisions
 
-Status: architecture approved on 2026-11-14. Phases 0 and 1 are complete (2026-11-15). Next step is Phase 2.
+Status: architecture approved on 2026-11-14. Phases 0, 1 and 2 are complete (2026-11-15). Next step is Phase 3. How to run and use the app: [USAGE.md](USAGE.md).
 
 This document records what was found in the environment, the architecture that was agreed, and the reasons. Requirements are in [DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md).
 
@@ -119,6 +119,18 @@ Consequences for the router (Phase 3):
 - The two-stage design holds. An LLM classification costs a swap to `qwen3.5:4b` plus a swap to the chosen model, about 10 to 12 seconds of overhead, so deterministic signals should decide whenever they can.
 - The classifier call must run with thinking off.
 - Preferring the already-loaded model when it is adequate saves about 6 seconds per request.
+
+## Phase 2 additions (2026-11-15)
+
+Phase 2 went beyond the original table at the owner's request. Batch evaluation is the owner's main workflow.
+
+- **Batches.** `POST /api/batches` runs many prompts on many models (all installed models by default) and stores every output. Executions are grouped by model, with the loaded model first.
+- **Export for judges.** `GET /api/batches/{id}/export` returns completed outputs keyed by `execution_id`. Blind by default: no model names, no thinking text.
+- **Evaluation import.** `POST /api/evaluations` stores results from any judge: a model, Claude Code, or a person. The `evaluations` table and the app-computed overall score therefore already exist; Phase 4 adds the in-app Claude API judge on the same table.
+- **Background execution with polling.** A request returns at once; the UI polls for status. Streaming was deferred.
+- **Storage.** Python's built-in `sqlite3`, all SQL in `store.py`, schema versions tracked with `PRAGMA user_version`.
+- **Observed:** `deepseek-r1:8b` thinks even when asked not to, so a low output-token limit can leave its answer empty.
+- **Memory:** the Vite dev server uses about 260 MB and the backend about 50 MB.
 
 ## Known risks
 

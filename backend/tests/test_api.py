@@ -1,15 +1,7 @@
 """HTTP endpoints against the fake provider."""
 
-import asyncio
-
-import httpx2
-
-from llm_gateway.main import create_app
 from llm_gateway.providers.base import (
-    GenerationFailed,
-    GenerationTimeout,
     LoadedModel,
-    ModelInfo,
     ProviderUnavailable,
 )
 from llm_gateway.system import parse_nvidia_smi
@@ -39,103 +31,6 @@ def test_models_when_provider_down(client, provider):
     response = client.get("/api/models")
     assert response.status_code == 503
     assert response.json()["error"] == "provider_unavailable"
-
-
-def test_generate_returns_response_and_timings(client):
-    response = client.post("/api/generate", json={"model": "small:1b", "prompt": "hello"})
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["result"]["response"] == "echo: hello"
-    assert body["result"]["model"] == "small:1b"
-    assert body["queue_wait_ms"] >= 0
-    assert body["execution_ms"] >= 0
-    assert body["started_at"]
-
-
-def test_generate_unknown_model_is_404_without_running(client, provider):
-    response = client.post("/api/generate", json={"model": "missing:1b", "prompt": "hello"})
-    assert response.status_code == 404
-    assert response.json()["error"] == "model_not_found"
-    assert provider.calls == []
-
-
-def test_generate_finds_a_newly_installed_model(client, provider):
-    client.get("/api/models")  # fills the cache
-    provider.models.append(ModelInfo(name="new:1b", size_bytes=1, num_ctx=4096))
-    response = client.post("/api/generate", json={"model": "new:1b", "prompt": "hello"})
-    assert response.status_code == 200
-
-
-def test_generate_rejects_empty_prompt(client):
-    response = client.post("/api/generate", json={"model": "small:1b", "prompt": ""})
-    assert response.status_code == 422
-
-
-def test_generate_error_statuses(client, provider):
-    client.get("/api/models")  # model lookup succeeds; only generation fails
-    for error, status, code in [
-        (GenerationFailed("oom"), 502, "generation_failed"),
-        (GenerationTimeout("slow"), 504, "generation_timeout"),
-        (ProviderUnavailable("down"), 503, "provider_unavailable"),
-    ]:
-        provider.error = error
-        provider.list_models = _static(provider.models)
-        response = client.post("/api/generate", json={"model": "small:1b", "prompt": "hi"})
-        assert (response.status_code, response.json()["error"]) == (status, code)
-
-
-def _static(models):
-    async def list_models():
-        return list(models)
-
-    return list_models
-
-
-def test_a_failed_generation_does_not_block_the_next(client, provider):
-    client.get("/api/models")
-    provider.list_models = _static(provider.models)
-    provider.error = GenerationFailed("oom")
-    assert (
-        client.post("/api/generate", json={"model": "small:1b", "prompt": "a"}).status_code == 502
-    )
-    provider.error = None
-    assert (
-        client.post("/api/generate", json={"model": "small:1b", "prompt": "b"}).status_code == 200
-    )
-    assert client.get("/api/status").json()["queue"] == {
-        "busy": False,
-        "running_model": None,
-        "waiting": 0,
-    }
-
-
-def test_generations_run_one_at_a_time_in_order(provider):
-    provider.delay = 0.02
-    app = create_app(provider=provider)
-
-    async def scenario():
-        async with app.router.lifespan_context(app):
-            transport = httpx2.ASGITransport(app=app)
-            async with httpx2.AsyncClient(transport=transport, base_url="http://test") as http:
-                names = ["small:1b", "thinker:8b", "small:1b"]
-                tasks = []
-                for name in names:
-                    tasks.append(
-                        asyncio.create_task(
-                            http.post("/api/generate", json={"model": name, "prompt": "hi"})
-                        )
-                    )
-                    await asyncio.sleep(0.005)  # fix the arrival order
-                return [r.json() for r in await asyncio.gather(*tasks)]
-
-    records = asyncio.run(scenario())
-
-    assert provider.max_running == 1
-    assert provider.calls == ["small:1b", "thinker:8b", "small:1b"]
-    waits = [r["queue_wait_ms"] for r in records]
-    assert waits[0] < waits[1] < waits[2]
-    assert waits[2] >= 20  # waited for at least one full generation
 
 
 def test_status_ok(client, provider):

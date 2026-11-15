@@ -8,6 +8,7 @@ queue.
 
 import asyncio
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from pydantic import BaseModel
@@ -47,7 +48,13 @@ class ExecutionQueue:
             busy=self._lock.locked(), running_model=self._running_model, waiting=self._waiting
         )
 
-    async def run(self, request: GenerationRequest, model: ModelInfo) -> ExecutionRecord:
+    async def run(
+        self,
+        request: GenerationRequest,
+        model: ModelInfo,
+        on_start: Callable[[], None] | None = None,
+    ) -> ExecutionRecord:
+        """Wait for a turn, then generate. `on_start` is called when the turn begins."""
         enqueued = time.perf_counter()
         self._waiting += 1
         try:
@@ -56,6 +63,8 @@ class ExecutionQueue:
             self._waiting -= 1
         try:
             self._running_model = model.name
+            if on_start:
+                on_start()
             started_at = datetime.now(UTC)
             start = time.perf_counter()
             result = await self._provider.generate(request, model)

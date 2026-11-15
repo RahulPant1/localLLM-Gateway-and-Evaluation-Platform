@@ -1,6 +1,6 @@
 # Architecture and Agreed Decisions
 
-Status: architecture approved on 2026-11-14. No application code exists yet. Next step is Phase 0.
+Status: architecture approved on 2026-11-14. Phases 0 and 1 are complete (2026-11-15). Next step is Phase 2.
 
 This document records what was found in the environment, the architecture that was agreed, and the reasons. Requirements are in [DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md).
 
@@ -104,6 +104,21 @@ Routing confidence is derived from agreement between signals, not from the model
 | 6. Hardening and docs | Router confidence report, install and run instructions | Acceptance criteria in section 11 of the requirements |
 
 The UI grows with each phase from Phase 2. The Claude API key is not needed before Phase 4.
+
+## Phase 1 findings (measured 2026-11-15)
+
+Full table in [SWAP_TIMES.md](SWAP_TIMES.md).
+
+- Swapping to a different model costs about 5 to 7 seconds once model files are in the operating system's file cache, regardless of which model.
+- A first load from disk is slower: 19 seconds for `deepseek-r1:8b` from an empty GPU, 15 seconds for MedGemma.
+- A request to the already-loaded model has no measurable load cost (under 0.2 seconds total for a tiny prompt).
+- Thinking dominates latency on simple prompts: a warm `qwen3.5:4b` took 22.7 seconds on a one-line question because it produced 1,424 thinking tokens. With thinking off the same model answers a tiny prompt in under 0.1 seconds.
+
+Consequences for the router (Phase 3):
+
+- The two-stage design holds. An LLM classification costs a swap to `qwen3.5:4b` plus a swap to the chosen model, about 10 to 12 seconds of overhead, so deterministic signals should decide whenever they can.
+- The classifier call must run with thinking off.
+- Preferring the already-loaded model when it is adequate saves about 6 seconds per request.
 
 ## Known risks
 

@@ -8,7 +8,7 @@ prefixed with `GATEWAY_` so it cannot collide with unrelated variables.
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # backend/src/llm_gateway/config.py -> project root is three levels up.
@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     ollama_url: str = "http://127.0.0.1:11434"
     database_path: Path = Path("data/gateway.db")
     judge_model: str = "claude-opus-5-5"
+    # Context window requested for models whose Modelfile does not set one.
+    default_num_ctx: int = Field(default=8192, gt=0)
+    # Upper limit for one generation, including any model load.
+    generation_timeout_seconds: float = Field(default=300.0, gt=0)
     # SecretStr keeps the key out of repr(), logs and JSON dumps by default.
     anthropic_api_key: SecretStr | None = None
 

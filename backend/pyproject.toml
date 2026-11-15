@@ -8,6 +8,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.163.0",
+    "httpx2>=2.16.0",
     "pydantic-settings>=2.16.3",
     "uvicorn[standard]>=0.54.0",
 ]
@@ -18,13 +19,14 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "httpx2>=2.16.0",
     "pytest>=9.2.0",
     "ruff>=0.17.5",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not live'"
+markers = ["live: needs the real Ollama service and loads a model onto the GPU"]
 
 [tool.ruff]
 line-length = 100

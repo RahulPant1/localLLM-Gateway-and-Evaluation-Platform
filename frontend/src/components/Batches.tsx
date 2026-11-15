@@ -201,7 +201,10 @@ export function Batches({ models, modelsError }: Props) {
               Cells show run time, and the mean evaluation score once evaluated. Click a cell to read the output.
             </p>
             {picked && (
-              <RequestView request={{ ...picked, executions: picked.executions.filter((e) => e.id === cell) }} />
+              <RequestView
+                key={cell}
+                request={{ ...picked, executions: picked.executions.filter((e) => e.id === cell) }}
+              />
             )}
           </>
         )}

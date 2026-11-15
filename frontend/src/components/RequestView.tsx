@@ -1,8 +1,17 @@
+import { useEffect, useState } from "react";
 import type { RequestRecord } from "../api";
+import { Chat } from "./Chat";
 import { ExecutionCard } from "./ExecutionCard";
 
-/** A request's prompt and one card per model it ran on. */
+/** A request's prompt and one card per model it ran on, or the conversation continued from one of them. */
 export function RequestView({ request, showPrompt = true }: { request: RequestRecord; showPrompt?: boolean }) {
+  const [chatId, setChatId] = useState<string | null>(null);
+
+  // Showing a different request closes any open conversation.
+  useEffect(() => setChatId(null), [request.id]);
+
+  if (chatId) return <Chat executionId={chatId} onClose={() => setChatId(null)} />;
+
   return (
     <div className="request-view">
       {showPrompt && (
@@ -25,7 +34,7 @@ export function RequestView({ request, showPrompt = true }: { request: RequestRe
       )}
       <div className={request.executions.length > 1 ? "cards compare" : "cards"}>
         {request.executions.map((e) => (
-          <ExecutionCard key={e.id} execution={e} />
+          <ExecutionCard key={e.id} execution={e} onContinue={() => setChatId(e.id)} />
         ))}
       </div>
     </div>

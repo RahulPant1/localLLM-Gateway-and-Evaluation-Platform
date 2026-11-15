@@ -140,6 +140,7 @@ class OllamaProvider(ModelProvider):
         messages = []
         if request.system:
             messages.append({"role": "system", "content": request.system})
+        messages.extend(m.model_dump() for m in request.history)
         messages.append({"role": "user", "content": request.prompt})
 
         options: dict = {"num_ctx": model.num_ctx}
@@ -216,7 +217,11 @@ def context_warnings(
 ) -> list[str]:
     """Flag likely truncation. Ollama truncates silently, so these are heuristics."""
     warnings = []
-    text_length = len(request.prompt) + len(request.system or "")
+    text_length = (
+        len(request.prompt)
+        + len(request.system or "")
+        + sum(len(m.content) for m in request.history)
+    )
     if text_length / CHARS_PER_TOKEN > num_ctx:
         warnings.append("prompt_probably_truncated")
     if done_reason == "length":

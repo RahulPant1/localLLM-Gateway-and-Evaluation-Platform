@@ -132,6 +132,16 @@ Phase 2 went beyond the original table at the owner's request. Batch evaluation 
 - **Observed:** `deepseek-r1:8b` thinks even when asked not to, so a low output-token limit can leave its answer empty.
 - **Memory:** the Vite dev server uses about 260 MB and the backend about 50 MB.
 
+## Follow-up chat (added 2026-11-15, before Phase 3)
+
+- **No conversation table.** A follow-up is an ordinary request whose `parent_execution_id` names the answer it continues from. Each turn keeps its own timings, status and evaluations. From a comparison, each model's answer can be continued separately.
+- **History sent to the model.** Every earlier prompt and answer, plus the first turn's system prompt. Thinking text is never sent back.
+- **Context limit: warn and stop.** Usage is estimated from the token counts Ollama reports. The UI warns at 70% of the model's context and the API refuses new messages at 90% (`context_full`), because Ollama silently drops old text once the window fills. Dropping or summarising old turns was deferred.
+- **Same model throughout.** A follow-up is never re-routed.
+- **After a failed turn**, the next message continues from the last completed answer.
+- **Deferred:** streaming replies; including earlier turns in the judge export (needed when Phase 4 evaluates follow-up answers; batch exports are unaffected because batch prompts are first turns).
+- Model output is rendered as Markdown in the UI; raw HTML in output is not rendered.
+
 ## Known risks
 
 - Model swap latency dominates comparisons and LLM-classified routes. Phase 1 measures it before the router design is final.

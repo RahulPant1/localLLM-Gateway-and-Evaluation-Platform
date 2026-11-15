@@ -121,6 +121,44 @@ a.button:hover { border-color: var(--accent); }
   white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.55 ui-monospace, "Cascadia Code", Consolas, monospace;
   max-height: 520px; overflow: auto;
 }
+.response:has(.markdown) { white-space: normal; font: inherit; }
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown p { margin: 8px 0; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4 { font-size: 14px; margin: 14px 0 6px; }
+.markdown pre {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; overflow-x: auto; font: 12.5px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+.markdown pre code { background: none; padding: 0; }
+.markdown code { font: 12.5px ui-monospace, "Cascadia Code", Consolas, monospace; background: var(--panel); }
+.markdown table { border-collapse: collapse; margin: 8px 0; }
+.markdown th, .markdown td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+.markdown blockquote { margin: 8px 0; padding-left: 12px; border-left: 3px solid var(--border); color: var(--muted); }
+
+button.secondary {
+  font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; margin-top: 8px;
+  padding: 5px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--accent);
+}
+button.secondary:hover { border-color: var(--accent); }
+
+.chat-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.chat-head button.secondary { margin-top: 0; }
+.turn-user {
+  margin: 14px 0 8px auto; max-width: 85%; width: fit-content; padding: 8px 12px; border-radius: 12px 12px 2px 12px;
+  background: var(--accent); color: var(--accent-text); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.turn-meta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
+.chat .response { max-height: none; }
+.meter { display: flex; align-items: center; gap: 10px; margin: 14px 0 6px; font-size: 12px; color: var(--muted); }
+.meter-bar { flex: 0 0 180px; height: 6px; border-radius: 3px; background: var(--neutral-bg); overflow: hidden; }
+.meter-fill { height: 100%; background: var(--good); }
+.meter-fill.warning { background: var(--warn); }
+.meter-fill.full { background: var(--bad); }
+.reply { display: flex; gap: 8px; align-items: flex-end; }
+.reply textarea { margin: 0; }
+.reply button.primary { width: auto; white-space: nowrap; }
+
 .response.plain { font-family: inherit; max-height: 220px; }
 .response.thinking { color: var(--muted); max-height: 300px; }
 .error { color: var(--bad); background: var(--bad-bg); padding: 8px 10px; border-radius: 8px; overflow-wrap: anywhere; }

@@ -9,19 +9,13 @@ import logging
 from collections.abc import Iterable
 
 from llm_gateway.catalog import ModelCatalog
+from llm_gateway.conversation import compose_prompt, history_messages
 from llm_gateway.execution import ExecutionQueue
 from llm_gateway.providers.base import GenerationRequest, ModelProvider, ProviderError
 from llm_gateway.schemas import Execution, RequestRecord
 from llm_gateway.store import Store
 
 logger = logging.getLogger(__name__)
-
-
-def compose_prompt(request: RequestRecord) -> str:
-    """The text sent to the model: the prompt, followed by any source material."""
-    if not request.source_material:
-        return request.prompt
-    return f"{request.prompt}\n\nSource material:\n{request.source_material}"
 
 
 class Runner:
@@ -70,12 +64,16 @@ class Runner:
     async def _run_one(self, execution: Execution, request: RequestRecord) -> None:
         """Run one execution. Any failure is recorded on that execution only."""
         try:
+            history = []
+            if request.parent_execution_id:
+                history = history_messages(self._store.ancestors(request.parent_execution_id))
             model = await self._catalog.get(execution.model)
             record = await self._queue.run(
                 GenerationRequest(
                     model=execution.model,
                     prompt=compose_prompt(request),
                     system=request.system,
+                    history=history,
                     think=request.think,
                     max_tokens=request.max_tokens,
                 ),

@@ -1,6 +1,7 @@
 import type { Execution } from "../api";
 import { STATUS_TEXT, WARNING_TEXT, seconds } from "../format";
 import { useNow } from "../hooks";
+import { Markdown } from "./Markdown";
 
 const DIMENSION_LABELS: Record<string, string> = {
   correctness: "Correctness",
@@ -16,7 +17,13 @@ function Elapsed({ execution }: { execution: Execution }) {
   return <span>{Math.max(0, Math.round((now - since) / 1000))} s</span>;
 }
 
-export function ExecutionCard({ execution }: { execution: Execution }) {
+interface Props {
+  execution: Execution;
+  /** When given, the card offers to continue the conversation from this answer. */
+  onContinue?: () => void;
+}
+
+export function ExecutionCard({ execution, onContinue }: Props) {
   const m = execution.metrics ?? {};
   return (
     <article className="card">
@@ -53,13 +60,21 @@ export function ExecutionCard({ execution }: { execution: Execution }) {
         </p>
       ))}
       {execution.status === "completed" && (
-        <pre className="response">{execution.response || "(empty response)"}</pre>
+        <div className="response">
+          {execution.response ? <Markdown text={execution.response} /> : <span className="muted">(empty response)</span>}
+        </div>
       )}
       {execution.thinking && (
         <details>
           <summary>Thinking ({execution.thinking.length.toLocaleString()} characters)</summary>
           <pre className="response thinking">{execution.thinking}</pre>
         </details>
+      )}
+
+      {onContinue && execution.status === "completed" && (
+        <button className="secondary" onClick={onContinue}>
+          {execution.follow_up_count > 0 ? "Open conversation" : "Continue chat with this model"}
+        </button>
       )}
 
       {execution.evaluations.map((v) => (

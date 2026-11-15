@@ -74,11 +74,15 @@ class Execution(BaseModel):
     metrics: dict | None = None
     warnings: list[str] = []
     evaluations: list[Evaluation] = []
+    # How many follow-up messages continue the conversation from this answer.
+    follow_up_count: int = 0
 
 
 class RequestRecord(BaseModel):
     id: str
     batch_id: str | None = None
+    # Set on a follow-up: the answer this message continues from.
+    parent_execution_id: str | None = None
     prompt: str
     system: str | None = None
     source_material: str | None = None
@@ -100,6 +104,39 @@ class RequestCreate(PromptInput):
     models: list[str] = Field(min_length=1)
     think: bool | None = None
     max_tokens: int | None = Field(default=None, gt=0)
+
+
+class FollowUpCreate(BaseModel):
+    prompt: str = Field(min_length=1)
+    # None = keep the conversation's setting.
+    think: bool | None = None
+
+
+class ThreadTurn(BaseModel):
+    request_id: str
+    prompt: str
+    source_material: str | None
+    created_at: datetime
+    execution: Execution
+
+
+class ContextUsage(BaseModel):
+    """Estimate of how full the model's context window is before the next message."""
+
+    used_tokens: int
+    limit_tokens: int | None
+    fraction: float | None
+    state: Literal["ok", "warning", "full"]
+
+
+class Thread(BaseModel):
+    model: str
+    system: str | None
+    turns: list[ThreadTurn]
+    context: ContextUsage
+    # The answer a new message would continue from; None while a turn is in
+    # progress or when no turn has completed.
+    reply_to: str | None
 
 
 class BatchCreate(BaseModel):

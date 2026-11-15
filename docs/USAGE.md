@@ -36,6 +36,10 @@ uv run pytest -m live     # real Ollama; loads a model
 - **Batch runs**: many prompts on many models, with a results grid and export.
 - **History**: past single and comparison requests.
 
+## Follow-up chat
+
+Every completed answer has a **Continue chat with this model** button, in the Workspace, History and batch results. It opens a conversation in which the model sees all earlier messages. The meter under the conversation shows how much of the model's context window is used; at 90% the conversation cannot be continued and a new request is needed. Local models hold about 8,000 tokens (MedGemma about 4,000), far less than cloud assistants.
+
 ## Batch runs and later evaluation
 
 1. In **Batch runs**, type prompts separated by a line containing only `---`, pick models (all by default) and run. Work is grouped by model, so 10 prompts on 4 models cost 4 model loads.

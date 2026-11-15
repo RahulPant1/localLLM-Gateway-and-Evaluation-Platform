@@ -48,11 +48,35 @@ export interface Execution {
   metrics: Record<string, number | string | null> | null;
   warnings: string[];
   evaluations: Evaluation[];
+  follow_up_count: number;
+}
+
+export interface ThreadTurn {
+  request_id: string;
+  prompt: string;
+  source_material: string | null;
+  created_at: string;
+  execution: Execution;
+}
+
+export interface Thread {
+  model: string;
+  system: string | null;
+  turns: ThreadTurn[];
+  context: {
+    used_tokens: number;
+    limit_tokens: number | null;
+    fraction: number | null;
+    state: "ok" | "warning" | "full";
+  };
+  // The answer a new message continues from; null while a turn is in progress.
+  reply_to: string | null;
 }
 
 export interface RequestRecord {
   id: string;
   batch_id: string | null;
+  parent_execution_id: string | null;
   prompt: string;
   system: string | null;
   source_material: string | null;
@@ -145,6 +169,9 @@ export const api = {
     models: string[];
     think: boolean | null;
   }) => call<BatchSummary>("/api/batches", body),
+  thread: (executionId: string) => call<Thread>(`/api/executions/${executionId}/thread`),
+  followUp: (executionId: string, prompt: string) =>
+    call<RequestRecord>(`/api/executions/${executionId}/follow-ups`, { prompt }),
   batches: () => call<BatchSummary[]>("/api/batches"),
   batch: (id: string) => call<BatchDetail>(`/api/batches/${id}`),
   exportUrl: (id: string, blind: boolean) =>

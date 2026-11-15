@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from llm_gateway.catalog import ModelCatalog
+from llm_gateway.conversation import build_thread, context_usage, full_thread
 from llm_gateway.runner import Runner
 from llm_gateway.schemas import (
     DIMENSIONS,
@@ -16,9 +17,11 @@ from llm_gateway.schemas import (
     BatchSummary,
     EvaluationImport,
     ExportItem,
+    FollowUpCreate,
     PromptInput,
     RequestCreate,
     RequestRecord,
+    Thread,
 )
 from llm_gateway.store import Store
 
@@ -86,6 +89,57 @@ def get_request(request_id: str, store: StoreDep) -> RequestRecord:
     record = store.get_request(request_id)
     if record is None:
         raise HTTPException(404, "Request not found")
+    return record
+
+
+@router.get("/executions/{execution_id}/thread")
+def get_thread(execution_id: str, store: StoreDep) -> Thread:
+    """The conversation this answer belongs to, with an estimate of context use."""
+    turns = full_thread(store, execution_id)
+    if not turns:
+        raise HTTPException(404, "Execution not found")
+    return build_thread(turns)
+
+
+@router.post("/executions/{execution_id}/follow-ups", status_code=201)
+async def create_follow_up(
+    execution_id: str, body: FollowUpCreate, store: StoreDep, runner: RunnerDep
+) -> RequestRecord:
+    """Continue the conversation from a completed answer, on the same model.
+
+    The model receives every earlier prompt and answer in the conversation.
+    Refused once the context window is nearly full, because Ollama would
+    silently drop the oldest text.
+    """
+    turns = store.ancestors(execution_id)
+    if not turns:
+        raise HTTPException(404, "Execution not found")
+    root_request, _ = turns[0]
+    _, parent = turns[-1]
+    if parent.status != "completed":
+        raise HTTPException(
+            409,
+            {"error": "parent_not_completed", "detail": "Only a completed answer can be continued"},
+        )
+    usage = context_usage(turns)
+    if usage.state == "full":
+        raise HTTPException(
+            409,
+            {
+                "error": "context_full",
+                "detail": f"The conversation uses about {usage.used_tokens} of the model's "
+                f"{usage.limit_tokens} context tokens. Start a new request to continue.",
+            },
+        )
+    record = store.create_request(
+        PromptInput(prompt=body.prompt, system=root_request.system),
+        [parent.model],
+        routing_mode=root_request.routing_mode,
+        think=root_request.think if body.think is None else body.think,
+        max_tokens=root_request.max_tokens,
+        parent_execution_id=parent.id,
+    )
+    await runner.schedule([record])
     return record
 
 

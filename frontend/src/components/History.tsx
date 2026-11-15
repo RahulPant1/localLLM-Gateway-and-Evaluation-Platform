@@ -42,6 +42,7 @@ export function History() {
                     {when(r.created_at)} · {r.executions.map((e) => e.model).join(", ")}
                     {r.executions.some(isActive) && " · in progress"}
                     {failed > 0 && ` · ${failed} failed`}
+                    {r.executions.some((e) => e.follow_up_count > 0) && " · conversation"}
                   </span>
                 </button>
               </li>

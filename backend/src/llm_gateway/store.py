@@ -83,6 +83,11 @@ MIGRATIONS = [
     );
     CREATE INDEX evaluations_execution ON evaluations(execution_id);
     """,
+    # 2: follow-up chat. A request may continue from an earlier answer.
+    """
+    ALTER TABLE requests ADD COLUMN parent_execution_id TEXT REFERENCES executions(id);
+    CREATE INDEX requests_parent ON requests(parent_execution_id);
+    """,
 ]
 
 
@@ -135,12 +140,14 @@ class Store:
         max_tokens: int | None,
         batch_id: str | None = None,
         position: int = 0,
+        parent_execution_id: str | None = None,
     ) -> str:
         request_id = _id()
         now = _now()
         self._db.execute(
             "INSERT INTO requests (id, batch_id, position, prompt, system, source_material,"
-            " routing_mode, think, max_tokens, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            " routing_mode, think, max_tokens, created_at, parent_execution_id)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
                 request_id,
                 batch_id,
@@ -152,6 +159,7 @@ class Store:
                 think,
                 max_tokens,
                 now,
+                parent_execution_id,
             ),
         )
         self._db.executemany(
@@ -169,10 +177,16 @@ class Store:
         routing_mode: str = "manual",
         think: bool | None = None,
         max_tokens: int | None = None,
+        parent_execution_id: str | None = None,
     ) -> RequestRecord:
         with self._transaction():
             request_id = self._insert_request(
-                item, models, routing_mode=routing_mode, think=think, max_tokens=max_tokens
+                item,
+                models,
+                routing_mode=routing_mode,
+                think=think,
+                max_tokens=max_tokens,
+                parent_execution_id=parent_execution_id,
             )
         return self.get_request(request_id)
 
@@ -279,14 +293,28 @@ class Store:
             f"SELECT * FROM executions WHERE request_id IN ({marks}) ORDER BY position",
             request_ids,
         ).fetchall()
-        evaluations = self._evaluations_for([row["id"] for row in rows])
+        ids = [row["id"] for row in rows]
+        evaluations = self._evaluations_for(ids)
+        follow_ups = {
+            r["parent_execution_id"]: r["n"]
+            for r in self._db.execute(
+                "SELECT parent_execution_id, COUNT(*) AS n FROM requests"
+                f" WHERE parent_execution_id IN ({','.join('?' * len(ids))})"
+                " GROUP BY parent_execution_id",
+                ids,
+            )
+        }
         for row in rows:
             data = dict(row)
             data.pop("position")
             data["metrics"] = json.loads(data["metrics"]) if data["metrics"] else None
             data["warnings"] = json.loads(data["warnings"])
             found[row["request_id"]].append(
-                Execution(**data, evaluations=evaluations.get(row["id"], []))
+                Execution(
+                    **data,
+                    evaluations=evaluations.get(row["id"], []),
+                    follow_up_count=follow_ups.get(row["id"], 0),
+                )
             )
         return found
 
@@ -310,7 +338,10 @@ class Store:
     def list_requests(
         self, *, limit: int = 50, offset: int = 0, include_batches: bool = False
     ) -> list[RequestRecord]:
-        where = "1=1" if include_batches else "batch_id IS NULL"
+        # Follow-up messages are shown inside their conversation, not as separate rows.
+        where = "parent_execution_id IS NULL"
+        if not include_batches:
+            where += " AND batch_id IS NULL"
         return self._requests(where, (limit, offset), "created_at DESC, position LIMIT ? OFFSET ?")
 
     def batch_requests(self, batch_id: str) -> list[RequestRecord]:
@@ -324,6 +355,30 @@ class Store:
             return None
         request = self.get_request(row["request_id"])
         return next(e for e in request.executions if e.id == execution_id), request
+
+    def ancestors(self, execution_id: str) -> list[tuple[RequestRecord, Execution]]:
+        """The conversation from its first prompt down to this answer, oldest first."""
+        chain: list[tuple[RequestRecord, Execution]] = []
+        current: str | None = execution_id
+        while current:
+            found = self.get_execution(current)
+            if found is None:
+                break
+            execution, request = found
+            chain.append((request, execution))
+            current = request.parent_execution_id
+        return chain[::-1]
+
+    def newest_follow_up(self, execution_id: str) -> tuple[RequestRecord, Execution] | None:
+        row = self._db.execute(
+            "SELECT id FROM requests WHERE parent_execution_id = ?"
+            " ORDER BY created_at DESC LIMIT 1",
+            (execution_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        request = self.get_request(row["id"])
+        return request, request.executions[0]
 
     def _batch_summaries(self, where: str, params: tuple) -> list[BatchSummary]:
         batches = self._db.execute(

@@ -6,6 +6,7 @@ JSON directly. Adding another provider later means writing one more subclass.
 
 from abc import ABC, abstractmethod
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -67,10 +68,17 @@ class LoadedModel(BaseModel):
     expires_at: datetime | None = None
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
 class GenerationRequest(BaseModel):
     model: str
     prompt: str = Field(min_length=1)
     system: str | None = None
+    # Earlier turns of the conversation, oldest first. Empty for a first prompt.
+    history: list[ChatMessage] = Field(default_factory=list)
     # None = think if the model supports it. Thinking text is always kept
     # separate from the answer.
     think: bool | None = None

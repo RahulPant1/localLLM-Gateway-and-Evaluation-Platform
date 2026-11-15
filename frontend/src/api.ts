@@ -248,6 +248,7 @@ export interface Overview {
       router_mean: number | null;
       best_fixed_model: string | null;
       best_fixed_mean: number | null;
+      best_possible_mean: number | null;
     };
   };
 }

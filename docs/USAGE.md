@@ -42,10 +42,14 @@ uv run pytest -m live     # real Ollama; loads a model
 
 The first tab summarises everything stored, for the last 7 days, 30 days or all time. It refreshes every 10 seconds and changes nothing.
 
+From top to bottom:
+
+- **Which model suits which task**: average judge score per model for each task type (or domain) the judge assigned, as a shaded grid with a ★ on the clear best in each row. Switch between task type and domain at the top right.
+- **Model leaderboard**: models ranked by overall score, with each rubric dimension, the number of scored answers and critical issues (answers the judge flagged as potentially harmful if trusted).
+- **Is the router worth it?**: the average score of the router's picks next to always using the best single model and the best model chosen for every prompt (a ceiling no router can reach in advance), and on how many prompts the router's pick was a top-scored model. It needs prompts where the pick and at least one other model were both scored, which in practice means a judged batch.
 - **Routing**: how many prompts the router decided, which model it picked how often, whether the quick rules or the classifier model decided, and how often the fallback was used. Batch prompts count too: the router's pick is recorded for each, although every model runs.
 - **Local performance**: tokens generated, speed, GPU time, and the share of answers that needed no model swap (a load under 1 second). The cloud cost line is an estimate: the same token counts at the list price of the model named in `.env` (`GATEWAY_CLOUD_COMPARE_MODEL` and the two `GATEWAY_CLOUD_*_PER_MTOK` prices; set both prices to 0 to hide it).
 - **Requests**: answers, typical (median) and slowest time, failures and tokens, per model or per task type. Manual requests have no task type and appear as "Not routed".
-- **Evaluation**: average judge scores per model and per rubric dimension, and a table of average score per model for each task type or domain the judge assigned, with the best model marked. The **router check** counts the prompts where the router's pick was also the top-scored model. It needs prompts where the pick and at least one other model were both scored, which in practice means a judged batch.
 
 To fill it with a meaningful sample, paste [sample_batch_prompts.txt](sample_batch_prompts.txt) (28 prompts, four per task type) into **Batch runs**, run it on all models, then judge it in the **Evaluate** tab.
 

@@ -92,6 +92,7 @@ def test_scores_and_router_check(client):
         "router_mean": 7.0,
         "best_fixed_model": "small:1b",
         "best_fixed_mean": 7.0,
+        "best_possible_mean": 8.5,
     }
 
 

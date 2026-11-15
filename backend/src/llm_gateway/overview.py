@@ -100,6 +100,8 @@ class RouterCheck(BaseModel):
     # models scored on all of them.
     best_fixed_model: str | None
     best_fixed_mean: float | None
+    # Mean of the best score on each prompt: the ceiling for any router.
+    best_possible_mean: float | None = None
 
 
 class CellScore(BaseModel):
@@ -273,6 +275,7 @@ def _router_check(requests: list[RequestRecord]) -> RouterCheck:
         router_mean=_mean(picked),
         best_fixed_model=best_model,
         best_fixed_mean=best_mean,
+        best_possible_mean=_mean([max(scores.values()) for _, scores in compared]),
     )
 
 

@@ -224,7 +224,8 @@ progress { width: 160px; accent-color: var(--accent); }
 .cell.selected, .cell:hover { border-color: var(--accent); }
 
 /* Overview tab */
-.overview-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(460px, 100%), 1fr)); }
+.overview { max-width: 1400px; margin: 0 auto; }
+.overview-grid { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
 .panel.overview-panel { width: auto; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
 .panel-head h2 { margin: 0; }
@@ -269,3 +270,23 @@ progress { width: 160px; accent-color: var(--accent); }
 .best-mark { color: var(--good); font-weight: 600; font-size: 12px; white-space: nowrap; }
 
 .answer-slot { display: grid; gap: 8px; min-width: 0; align-content: start; }
+
+/* Overview: evaluation panel spans the full width and is laid out in sections */
+.section-title { font-size: 14px; margin: 22px 0 8px; }
+.panel-head.sub .section-title { margin: 0; }
+.eval-table { font-size: 13.5px; }
+.eval-table th, .eval-table td { padding: 8px 10px; }
+.eval-table tbody th { min-width: 150px; white-space: nowrap; }
+.eval-table .rank { width: 32px; color: var(--muted); text-align: right; }
+.eval-table .overall-col { min-width: 190px; }
+.eval-table td.heat { text-align: center; font-variant-numeric: tabular-nums; }
+.eval-table thead .num { text-align: center; }
+.eval-table td.best { font-weight: 700; }
+.task-table td.num.muted { text-align: center; }
+.legend { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 8px 0 0; }
+.legend-swatch { padding: 1px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.router-check { border-top: 0; margin-top: 0; padding-top: 0; max-width: 760px; }
+.router-bars { display: grid; gap: 8px; margin: 4px 0 12px; }
+.score-line { display: grid; grid-template-columns: minmax(130px, 200px) 1fr 52px; align-items: center; gap: 12px; }
+.score-line-label { font-size: 13px; }
+.score-line-value { text-align: right; font-variant-numeric: tabular-nums; }

@@ -4,6 +4,20 @@ A gateway for running several local language models on one 8 GB GPU, with a rout
 
 It runs [Ollama](https://ollama.com) models, stores every prompt and answer in SQLite, and has a web UI for single prompts, side-by-side comparison, and batch runs. Evaluation is done by an external judge (Claude Code, or any chat model) against a fixed rubric, with model names hidden from the judge.
 
+## Screenshots
+
+![Overview: which model suits which task, and the model leaderboard](docs/images/overview-evaluation.png)
+
+*Overview: average judge score per model and task type, then the leaderboard. This view counts every stored score, so its figures differ slightly from the 28-prompt table below.*
+
+![Overview: routing, local performance and requests](docs/images/overview-routing-performance.png)
+
+*Overview: which model the router picked, throughput on the GPU, and answer times per model.*
+
+![Batch runs: 28 prompts on four models](docs/images/batch-runs.png)
+
+*Batch runs: one row per prompt, one column per model; each cell shows the run time and the judge's score.*
+
 ## What the first test found
 
 28 prompts run on four local models and judged blind (details and limits in [docs/RESULTS.md](docs/RESULTS.md)):

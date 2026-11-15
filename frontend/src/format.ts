@@ -83,6 +83,17 @@ export function duration(totalSeconds: number): string {
 export const pretty = (name: string) =>
   name.charAt(0).toUpperCase() + name.slice(1).replace(/_/g, " ");
 
+/** A model name short enough for a table: no organisation prefix, no quantisation suffix. */
+export const modelLabel = (name: string) =>
+  (name.split("/").pop() ?? name).replace(/-(it|instruct)?-?q\d.*$/i, "");
+
+/** Cell background for a 0-10 score: one hue, stronger as the score rises (plain below 5). */
+export function heat(score: number | null | undefined): { background?: string } {
+  if (score == null) return {};
+  const strength = Math.max(0, Math.min(1, (score - 5) / 5));
+  return { background: `color-mix(in srgb, var(--accent) ${Math.round(strength * 40)}%, var(--panel))` };
+}
+
 export const DIMENSION_TEXT: Record<string, string> = {
   correctness: "Correct",
   relevance: "Relevant",

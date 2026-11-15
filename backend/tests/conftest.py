@@ -42,6 +42,7 @@ class FakeProvider(ModelProvider):
         self.running = 0
         self.max_running = 0
         self.calls: list[str] = []
+        self.requests: list[GenerationRequest] = []
         # What the fake returns when asked to classify a request (schema-constrained call).
         self.classifier_answer = '{"category": "general_qa", "complexity": "low"}'
         self.classifier_calls = 0
@@ -63,7 +64,9 @@ class FakeProvider(ModelProvider):
             raise self.error
         return list(self.loaded)
 
-    async def generate(self, request: GenerationRequest, model: ModelInfo) -> GenerationResult:
+    async def generate(
+        self, request: GenerationRequest, model: ModelInfo, on_delta=None
+    ) -> GenerationResult:
         if self.error:
             raise self.error
         if request.response_schema:
@@ -78,8 +81,20 @@ class FakeProvider(ModelProvider):
         finally:
             self.running -= 1
         self.calls.append(model.name)
+        self.requests.append(request)
+        answer = f"echo: {request.prompt}"
+        if on_delta:
+            if request.think:
+                on_delta("thinking", "hmm")
+            on_delta("content", answer[:4])
+            on_delta("content", answer[4:])
         return GenerationResult(
-            model=model.name, response=f"echo: {request.prompt}", num_ctx=model.num_ctx
+            model=model.name,
+            response=answer,
+            num_ctx=model.num_ctx,
+            prompt_tokens=7,
+            output_tokens=3,
+            done_reason="stop",
         )
 
 

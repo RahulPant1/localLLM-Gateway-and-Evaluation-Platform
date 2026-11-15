@@ -15,6 +15,7 @@ from llm_gateway.api import router as runs_router
 from llm_gateway.catalog import ModelCatalog
 from llm_gateway.config import PROJECT_ROOT, Settings, get_settings
 from llm_gateway.execution import ExecutionQueue, QueueState
+from llm_gateway.openai_api import router as openai_router
 from llm_gateway.providers.base import (
     GenerationFailed,
     GenerationTimeout,
@@ -169,6 +170,7 @@ def create_app(provider: ModelProvider | None = None, settings: Settings | None 
     if settings is not None:
         app.dependency_overrides[get_settings] = lambda: settings
     app.include_router(runs_router)
+    app.include_router(openai_router)
 
     @app.exception_handler(ProviderError)
     async def provider_error(_: Request, exc: ProviderError) -> JSONResponse:

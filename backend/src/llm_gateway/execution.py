@@ -18,6 +18,7 @@ from llm_gateway.providers.base import (
     GenerationResult,
     ModelInfo,
     ModelProvider,
+    OnDelta,
 )
 
 
@@ -53,8 +54,10 @@ class ExecutionQueue:
         request: GenerationRequest,
         model: ModelInfo,
         on_start: Callable[[], None] | None = None,
+        on_delta: OnDelta | None = None,
     ) -> ExecutionRecord:
-        """Wait for a turn, then generate. `on_start` is called when the turn begins."""
+        """Wait for a turn, then generate. `on_start` is called when the turn
+        begins; `on_delta` receives the answer piece by piece."""
         enqueued = time.perf_counter()
         self._waiting += 1
         try:
@@ -67,7 +70,10 @@ class ExecutionQueue:
                 on_start()
             started_at = datetime.now(UTC)
             start = time.perf_counter()
-            result = await self._provider.generate(request, model)
+            if on_delta is None:
+                result = await self._provider.generate(request, model)
+            else:
+                result = await self._provider.generate(request, model, on_delta=on_delta)
             end = time.perf_counter()
         finally:
             self._running_model = None

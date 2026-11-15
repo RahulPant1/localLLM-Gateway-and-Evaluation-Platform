@@ -210,3 +210,61 @@ def test_unreachable_ollama_raises_provider_unavailable():
     for call in (provider.version, provider.list_models, provider.list_loaded):
         with pytest.raises(ProviderUnavailable):
             run(call())
+
+
+# ---- streaming ----
+
+
+def stream_lines(*chunks):
+    return lambda request: httpx2.Response(
+        200, content="\n".join(json.dumps(c) for c in chunks) + "\n"
+    )
+
+
+def test_streaming_reports_pieces_and_returns_the_same_result():
+    final = {k: v for k, v in CHAT_OK.items() if k != "message"} | {"done": True}
+    provider, seen = make_provider(
+        chat=stream_lines(
+            {"message": {"thinking": "Capital of "}},
+            {"message": {"thinking": "France..."}},
+            {"message": {"content": "Par"}},
+            {"message": {"content": "is."}},
+            final | {"message": {"content": ""}},
+        )
+    )
+    pieces = []
+    request = GenerationRequest(model="qwen3.5:4b", prompt="Capital?", temperature=0.2)
+    result = run(provider.generate(request, THINKER, on_delta=lambda *p: pieces.append(p)))
+
+    assert pieces == [
+        ("thinking", "Capital of "),
+        ("thinking", "France..."),
+        ("content", "Par"),
+        ("content", "is."),
+    ]
+    assert result.response == "Paris." and result.thinking == "Capital of France..."
+    assert result.output_tokens == 40 and result.tokens_per_second == 20.0
+    assert seen[0]["stream"] is True
+    assert seen[0]["options"] == {"num_ctx": 8192, "temperature": 0.2}
+
+
+@pytest.mark.parametrize(
+    ("chat", "expected"),
+    [
+        (lambda r: httpx2.Response(404, json={"error": "model 'x' not found"}), ModelNotFound),
+        (
+            stream_lines({"message": {"content": "Pa"}}, {"error": "out of memory"}),
+            GenerationFailed,
+        ),
+        (stream_lines({"message": {"content": "Pa"}}), GenerationFailed),  # no final message
+        (lambda r: httpx2.Response(200, content="not json\n"), GenerationFailed),
+    ],
+)
+def test_streaming_error_mapping(chat, expected):
+    provider, _ = make_provider(chat=chat)
+    with pytest.raises(expected):
+        run(
+            provider.generate(
+                GenerationRequest(model="med:4b", prompt="hi"), PLAIN, on_delta=lambda *p: None
+            )
+        )

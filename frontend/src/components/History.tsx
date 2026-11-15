@@ -28,7 +28,10 @@ export function History({ onEvaluate }: { onEvaluate: (key: string) => void }) {
     <div className="columns">
       <section className="panel">
         <h2>History</h2>
-        <p className="muted small">Single and comparison requests, newest first. Batch runs are under Batch runs.</p>
+        <p className="muted small">
+          Single and comparison requests, newest first, including calls from other tools (marked API). Batch runs are
+          under Batch runs.
+        </p>
         {error && <p className="error">{error}</p>}
         {requests?.length === 0 && <p className="muted">Nothing has been run yet.</p>}
         <ul className="list">
@@ -39,7 +42,8 @@ export function History({ onEvaluate }: { onEvaluate: (key: string) => void }) {
                 <button className={`row ${openId === r.id ? "selected" : ""}`} onClick={() => setOpenId(r.id)}>
                   <span className="row-title">{snippet(r.prompt, 70)}</span>
                   <span className="muted small">
-                    {when(r.created_at)} · {r.routing_mode === "automatic" && "auto: "}
+                    {when(r.created_at)} · {r.source === "api" && "API · "}
+                    {r.routing_mode === "automatic" && "auto: "}
                     {r.executions.map((e) => e.model).join(", ") || "no model"}
                     {requestActive(r) && " · in progress"}
                     {failed > 0 && ` · ${failed} failed`}

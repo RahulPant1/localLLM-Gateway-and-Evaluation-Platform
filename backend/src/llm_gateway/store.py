@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
+from llm_gateway.providers.base import ChatMessage
 from llm_gateway.routing.types import RoutingDecision, RoutingDraft
 from llm_gateway.schemas import (
     BatchSummary,
@@ -115,6 +116,12 @@ MIGRATIONS = [
     ALTER TABLE evaluations ADD COLUMN task_type TEXT;
     ALTER TABLE evaluations ADD COLUMN domain TEXT;
     """,
+    # 5: requests from the OpenAI-compatible endpoint carry their own history.
+    """
+    ALTER TABLE requests ADD COLUMN history TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE requests ADD COLUMN source TEXT NOT NULL DEFAULT 'ui';
+    ALTER TABLE requests ADD COLUMN temperature REAL;
+    """,
 ]
 
 
@@ -168,13 +175,16 @@ class Store:
         batch_id: str | None = None,
         position: int = 0,
         parent_execution_id: str | None = None,
+        history: list[ChatMessage] | None = None,
+        source: str = "ui",
+        temperature: float | None = None,
     ) -> str:
         request_id = _id()
         now = _now()
         self._db.execute(
             "INSERT INTO requests (id, batch_id, position, prompt, system, source_material,"
-            " routing_mode, think, max_tokens, created_at, parent_execution_id)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            " routing_mode, think, max_tokens, created_at, parent_execution_id, history,"
+            " source, temperature) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 request_id,
                 batch_id,
@@ -187,6 +197,9 @@ class Store:
                 max_tokens,
                 now,
                 parent_execution_id,
+                json.dumps([m.model_dump() for m in history or []]),
+                source,
+                temperature,
             ),
         )
         self._db.executemany(
@@ -205,6 +218,9 @@ class Store:
         think: bool | None = None,
         max_tokens: int | None = None,
         parent_execution_id: str | None = None,
+        history: list[ChatMessage] | None = None,
+        source: str = "ui",
+        temperature: float | None = None,
     ) -> RequestRecord:
         with self._transaction():
             request_id = self._insert_request(
@@ -214,6 +230,9 @@ class Store:
                 think=think,
                 max_tokens=max_tokens,
                 parent_execution_id=parent_execution_id,
+                history=history,
+                source=source,
+                temperature=temperature,
             )
         return self.get_request(request_id)
 
@@ -436,6 +455,7 @@ class Store:
             data = dict(row)
             data.pop("position")
             data["think"] = None if data["think"] is None else bool(data["think"])
+            data["history"] = json.loads(data["history"])
             records.append(
                 RequestRecord(
                     **data,

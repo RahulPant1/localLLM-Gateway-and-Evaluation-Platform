@@ -71,6 +71,36 @@ In batch results, a dot (●) marks the model the router would have picked for e
 
 Every completed answer has a **Continue chat with this model** button, in the Workspace, History and batch results. It opens a conversation in which the model sees all earlier messages. The meter under the conversation shows how much of the model's context window is used; at 90% the conversation cannot be continued and a new request is needed. Local models hold about 8,000 tokens (MedGemma about 4,000), far less than cloud assistants.
 
+## Using the gateway from other tools
+
+The gateway speaks the OpenAI chat format at `http://localhost:8000/v1`, so editors, chat front ends and scripts can use your local models through it. Use the model name `auto` to let the router choose, or an installed model's name. Any API key is accepted; none is checked.
+
+```bash
+curl http://localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d '{
+  "model": "auto",
+  "messages": [{"role": "user", "content": "Write a Python function that reverses a string."}]
+}'
+```
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="local")
+answer = client.chat.completions.create(
+    model="auto", messages=[{"role": "user", "content": "What is a mutex?"}]
+)
+print(answer.choices[0].message.content, "- answered by", answer.model)
+```
+
+In a tool's settings, choose the "OpenAI compatible" provider type, base URL `http://localhost:8000/v1`, model `auto`, and any text as the key.
+
+- **Stored:** every call appears in History marked "API", with the conversation the tool sent, and can be evaluated like any other run.
+- **Streaming:** with `"stream": true` the answer arrives piece by piece. If the tool disconnects, generation stops.
+- **Thinking is off by default** for these calls, so tools stay responsive. A request turns it on with `"reasoning_effort": "medium"` or `"high"`; `GATEWAY_API_THINK=true` in `.env` changes the default. Thinking text is streamed in a separate `reasoning_content` field, never in the answer.
+- **Conversations with `auto`** are routed by their first user message, so a conversation stays on one model.
+- **Supported:** text messages, `stream`, `max_tokens`, `temperature`, `reasoning_effort`. **Ignored:** tools (function calling), `stop`, `top_p`, `response_format`. Images are rejected.
+- **One at a time:** a call waits its turn behind a running batch or another call. The gateway listens on this machine only.
+
 ## Batch runs and later evaluation
 
 1. In **Batch runs**, type prompts separated by a line containing only `---`, pick models (all by default) and run. Work is grouped by model, so 10 prompts on 4 models cost 4 model loads.

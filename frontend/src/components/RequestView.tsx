@@ -29,6 +29,17 @@ export function RequestView({ request, showPrompt = true, onEvaluate }: Props) {
         <div className="prompt-box">
           <span className="label">Prompt</span>
           <pre className="response plain">{request.prompt}</pre>
+          {request.history.length > 0 && (
+            <details>
+              <summary>Earlier conversation sent with this prompt ({request.history.length} messages)</summary>
+              {request.history.map((m, i) => (
+                <pre key={i} className="response plain">
+                  {m.role === "user" ? "User: " : "Assistant: "}
+                  {m.content}
+                </pre>
+              ))}
+            </details>
+          )}
           {request.system && (
             <details>
               <summary>System prompt</summary>

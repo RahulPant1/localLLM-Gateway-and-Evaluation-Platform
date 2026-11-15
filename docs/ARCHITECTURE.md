@@ -192,6 +192,15 @@ Caveat: Claude Code judging is only as blind as the judge's discipline. The same
 - **Task type and domain** (migration 4: two nullable columns on `evaluations`). The judge classifies each prompt from fixed lists in `taxonomy.py`; the lists are appended to the judge instructions by `load_judge_instructions`. They are separate from the router's seven categories: the router guesses before the answer exists, the judge labels afterwards with a finer list. A prompt's label is the one most of its evaluations carry. Unknown labels are stored as `other`.
 - The Evaluate tab lists only items with unscored outputs; fully scored ones return through "Evaluate again".
 
+## OpenAI-compatible endpoint (2026-11-15)
+
+- `openai_api.py`: `POST /v1/chat/completions` and `GET /v1/models`. A call becomes an ordinary stored request (`source = 'api'`), run by the same Runner and queue, so History, evaluation and the Overview cover it with no extra code.
+- API clients send the whole conversation each time, so the earlier turns are stored on the request (`requests.history`, migration 5) instead of through `parent_execution_id`. Migration 5 also adds `source` and `temperature`.
+- **Streaming:** `ModelProvider.generate` takes an optional `on_delta` callback; with it the Ollama provider reads `/api/chat` line by line. The Runner publishes `start`, `delta` and `end` events to a per-request queue that the HTTP handler turns into server-sent events. Requests made in the app do not stream; they still poll.
+- A streaming client that disconnects cancels the job, which closes the Ollama connection and frees the GPU. A non-streaming call runs to completion.
+- If the routed model fails after sending part of an answer and the fallback model runs, the stream contains both parts. Ollama failures normally happen before the first piece.
+- No authentication: uvicorn binds to 127.0.0.1.
+
 ## Known risks
 
 - Model swap latency dominates comparisons and LLM-classified routes. Phase 1 measures it before the router design is final.

@@ -35,7 +35,7 @@ def build_items(
             ]
         if blind:
             completed.sort(key=lambda e: e.id)
-        history = []
+        history = list(request.history)
         if request.parent_execution_id:
             history = history_messages(store.ancestors(request.parent_execution_id))
         for execution in completed:

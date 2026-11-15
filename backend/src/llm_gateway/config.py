@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     router_clarity_threshold: float = Field(default=0.4, ge=0, le=1)
     # Upper limit for one generation, including any model load.
     generation_timeout_seconds: float = Field(default=300.0, gt=0)
+    # Whether requests through the OpenAI-compatible endpoint think by default.
+    # Off keeps other tools responsive; a request can ask for it with
+    # reasoning_effort "medium" or "high".
+    api_think: bool = False
     # Cloud model the Overview screen prices the local token counts against
     # (US dollars per million tokens). Set both prices to 0 to hide the estimate.
     cloud_compare_model: str = "claude-opus-5-5"

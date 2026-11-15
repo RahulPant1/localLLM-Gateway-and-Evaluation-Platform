@@ -5,6 +5,7 @@ JSON directly. Adding another provider later means writing one more subclass.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from datetime import datetime
 from typing import Literal
 
@@ -83,6 +84,8 @@ class GenerationRequest(BaseModel):
     # separate from the answer.
     think: bool | None = None
     max_tokens: int | None = Field(default=None, gt=0)
+    # None = the model's own default.
+    temperature: float | None = Field(default=None, ge=0, le=2)
     # A JSON schema the answer must follow (used by the routing classifier).
     response_schema: dict | None = None
 
@@ -104,6 +107,10 @@ class GenerationResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+# Called with ("thinking" | "content", text) for each piece of a streamed answer.
+OnDelta = Callable[[str, str], None]
+
+
 class ModelProvider(ABC):
     name: str
 
@@ -120,5 +127,11 @@ class ModelProvider(ABC):
         """Return models currently held in memory."""
 
     @abstractmethod
-    async def generate(self, request: GenerationRequest, model: ModelInfo) -> GenerationResult:
-        """Run one generation to completion."""
+    async def generate(
+        self, request: GenerationRequest, model: ModelInfo, on_delta: OnDelta | None = None
+    ) -> GenerationResult:
+        """Run one generation to completion.
+
+        With `on_delta`, the answer is also reported piece by piece while it
+        is generated; the returned result is the same either way.
+        """

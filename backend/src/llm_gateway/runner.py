@@ -38,6 +38,21 @@ class Runner:
         self._queue = queue
         self._router = router
         self._tasks: set[asyncio.Task] = set()
+        # Request id -> queue of live events, for callers that stream an answer.
+        self._listeners: dict[str, asyncio.Queue] = {}
+
+    def subscribe(self, request_id: str) -> asyncio.Queue:
+        """Receive this request's live events: ("start", model),
+        ("delta", kind, text) and finally ("end",). Subscribe before scheduling."""
+        return self._listeners.setdefault(request_id, asyncio.Queue())
+
+    def unsubscribe(self, request_id: str) -> None:
+        self._listeners.pop(request_id, None)
+
+    def _publish(self, request_id: str, *event: object) -> None:
+        listener = self._listeners.get(request_id)
+        if listener is not None:
+            listener.put_nowait(event)
 
     async def _loaded_names(self) -> set[str]:
         try:
@@ -47,15 +62,18 @@ class Runner:
 
     async def schedule(
         self, requests: Iterable[RequestRecord], *, shadow_route: bool = False
-    ) -> None:
+    ) -> asyncio.Task:
         """Run the given requests as one background job.
 
         `shadow_route` records what the router would have chosen for each
         request without letting it pick the model (used for batches).
+        Cancelling the returned task stops the job and marks its unfinished
+        work as failed.
         """
         task = asyncio.create_task(self._run_all(list(requests), shadow_route))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        return task
 
     @staticmethod
     def _needs_routing(request: RequestRecord) -> bool:
@@ -91,6 +109,9 @@ class Runner:
         except Exception:
             logger.exception("Background run failed")
             self._interrupt(requests)
+        finally:
+            for request in requests:
+                self._publish(request.id, "end")
 
     def _interrupt(self, requests: list[RequestRecord]) -> None:
         """Close whatever this job left unfinished."""
@@ -100,7 +121,9 @@ class Runner:
             for execution in current.executions if current else []:
                 if execution.status in ("queued", "running"):
                     self._store.fail_execution(
-                        execution.id, "interrupted", "The backend stopped before this finished"
+                        execution.id,
+                        "interrupted",
+                        "Stopped early: the backend shut down or the caller disconnected",
                     )
 
     async def _route(
@@ -111,8 +134,11 @@ class Runner:
         for request in requests:
             if self._needs_routing(request) or (shadow_route and request.routing is None):
                 shadow = not self._needs_routing(request)
+                # A conversation from an API client is routed by its opening
+                # message, so it stays on one model instead of swapping per turn.
+                opening = next((m.content for m in request.history if m.role == "user"), None)
                 draft = await self._router.route(
-                    request.prompt, request.source_material, request.system
+                    opening or request.prompt, request.source_material, request.system
                 )
                 self._store.add_decision(request.id, draft, shadow=shadow)
                 if not shadow and draft.selected_model:
@@ -145,10 +171,17 @@ class Runner:
     ) -> tuple[bool, str | None]:
         """Run one execution. Any failure is recorded on that execution only."""
         try:
-            history = []
+            history = list(request.history)
             if request.parent_execution_id:
                 history = history_messages(self._store.ancestors(request.parent_execution_id))
             model = await self._catalog.get(execution.model)
+            on_delta = None
+            if request.id in self._listeners:
+                self._publish(request.id, "start", execution.model)
+
+                def on_delta(kind: str, text: str) -> None:
+                    self._publish(request.id, "delta", kind, text)
+
             record = await self._queue.run(
                 GenerationRequest(
                     model=execution.model,
@@ -157,9 +190,11 @@ class Runner:
                     history=history,
                     think=request.think,
                     max_tokens=request.max_tokens,
+                    temperature=request.temperature,
                 ),
                 model,
                 on_start=lambda: self._store.mark_running(execution.id),
+                on_delta=on_delta,
             )
         except ProviderError as exc:
             self._store.fail_execution(execution.id, exc.code, str(exc))

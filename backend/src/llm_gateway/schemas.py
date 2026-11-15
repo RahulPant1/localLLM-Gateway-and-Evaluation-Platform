@@ -110,6 +110,13 @@ class RequestRecord(BaseModel):
     routing_mode: RoutingMode
     think: bool | None = None
     max_tokens: int | None = None
+    temperature: float | None = None
+    # Earlier turns supplied by an API client, which sends the whole
+    # conversation each time. Follow-ups made in the app use
+    # parent_execution_id instead and leave this empty.
+    history: list[ChatMessage] = []
+    # "ui" = made in the app; "api" = came through the OpenAI-compatible endpoint.
+    source: Literal["ui", "api"] = "ui"
     created_at: datetime
     executions: list[Execution] = []
     # The router's decision. Null for manual requests, and for automatic ones

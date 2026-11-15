@@ -14,6 +14,7 @@ from llm_gateway.providers.base import (
     ModelInfo,
     ModelNotFound,
     ModelProvider,
+    OnDelta,
     ProviderUnavailable,
 )
 
@@ -136,7 +137,7 @@ class OllamaProvider(ModelProvider):
             for entry in (await self._json("GET", "/api/ps")).get("models", [])
         ]
 
-    async def generate(self, request: GenerationRequest, model: ModelInfo) -> GenerationResult:
+    def _chat_payload(self, request: GenerationRequest, model: ModelInfo, stream: bool) -> dict:
         messages = []
         if request.system:
             messages.append({"role": "system", "content": request.system})
@@ -146,11 +147,13 @@ class OllamaProvider(ModelProvider):
         options: dict = {"num_ctx": model.num_ctx}
         if request.max_tokens:
             options["num_predict"] = request.max_tokens
+        if request.temperature is not None:
+            options["temperature"] = request.temperature
         # No `keep_alive`: Ollama's own unload policy is left untouched.
         payload: dict = {
             "model": model.name,
             "messages": messages,
-            "stream": False,
+            "stream": stream,
             "options": options,
         }
         if request.response_schema:
@@ -160,39 +163,35 @@ class OllamaProvider(ModelProvider):
         # reasoning in its own field instead of mixed into the answer.
         if model.supports_thinking:
             payload["think"] = True if request.think is None else request.think
+        return payload
 
+    async def generate(
+        self, request: GenerationRequest, model: ModelInfo, on_delta: OnDelta | None = None
+    ) -> GenerationResult:
+        payload = self._chat_payload(request, model, stream=on_delta is not None)
         try:
-            response = await self._client.post(
-                "/api/chat", json=payload, timeout=self._generation_timeout
-            )
+            if on_delta is None:
+                body, content, thinking = await self._chat_once(payload)
+            else:
+                # httpx applies its timeout to each read; this limits the whole answer.
+                async with asyncio.timeout(self._generation_timeout):
+                    body, content, thinking = await self._chat_stream(payload, on_delta)
         except httpx2.ConnectError as exc:
             raise ProviderUnavailable(f"Cannot reach Ollama: {exc}") from exc
-        except httpx2.TimeoutException as exc:
+        except (httpx2.TimeoutException, TimeoutError) as exc:
             raise GenerationTimeout(
                 f"{model.name} did not finish within {self._generation_timeout:g}s"
             ) from exc
         except httpx2.HTTPError as exc:
             raise GenerationFailed(f"Connection to Ollama failed mid-generation: {exc}") from exc
 
-        if response.status_code == 404:
-            raise ModelNotFound(_error_message(response))
-        if response.status_code != 200:
-            raise GenerationFailed(
-                f"Ollama returned HTTP {response.status_code}: {_error_message(response)}"
-            )
-        try:
-            body = response.json()
-            message = body["message"]
-        except (json.JSONDecodeError, KeyError) as exc:
-            raise GenerationFailed("Ollama returned an unreadable response") from exc
-
         prompt_tokens = body.get("prompt_eval_count")
         output_tokens = body.get("eval_count")
         eval_ns = body.get("eval_duration")
         return GenerationResult(
             model=model.name,
-            response=message.get("content", ""),
-            thinking=message.get("thinking") or None,
+            response=content,
+            thinking=thinking or None,
             done_reason=body.get("done_reason"),
             num_ctx=model.num_ctx,
             prompt_tokens=prompt_tokens,
@@ -208,6 +207,59 @@ class OllamaProvider(ModelProvider):
                 request, model.num_ctx, prompt_tokens, output_tokens, body.get("done_reason")
             ),
         )
+
+    @staticmethod
+    def _check_status(status_code: int, message: str) -> None:
+        if status_code == 404:
+            raise ModelNotFound(message)
+        if status_code != 200:
+            raise GenerationFailed(f"Ollama returned HTTP {status_code}: {message}")
+
+    async def _chat_once(self, payload: dict) -> tuple[dict, str, str]:
+        """One complete answer. Returns Ollama's final body, the answer and the thinking."""
+        response = await self._client.post(
+            "/api/chat", json=payload, timeout=self._generation_timeout
+        )
+        self._check_status(response.status_code, _error_message(response))
+        try:
+            body = response.json()
+            message = body["message"]
+        except (json.JSONDecodeError, KeyError) as exc:
+            raise GenerationFailed("Ollama returned an unreadable response") from exc
+        return body, message.get("content", ""), message.get("thinking") or ""
+
+    async def _chat_stream(self, payload: dict, on_delta: OnDelta) -> tuple[dict, str, str]:
+        """The same answer, read line by line as Ollama produces it."""
+        content: list[str] = []
+        thinking: list[str] = []
+        final: dict | None = None
+        async with self._client.stream(
+            "POST", "/api/chat", json=payload, timeout=self._generation_timeout
+        ) as response:
+            if response.status_code != 200:
+                await response.aread()
+                self._check_status(response.status_code, _error_message(response))
+            async for line in response.aiter_lines():
+                if not line.strip():
+                    continue
+                try:
+                    chunk = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise GenerationFailed("Ollama returned an unreadable response") from exc
+                if chunk.get("error"):
+                    raise GenerationFailed(str(chunk["error"]))
+                message = chunk.get("message") or {}
+                if message.get("thinking"):
+                    thinking.append(message["thinking"])
+                    on_delta("thinking", message["thinking"])
+                if message.get("content"):
+                    content.append(message["content"])
+                    on_delta("content", message["content"])
+                if chunk.get("done"):
+                    final = chunk
+        if final is None:
+            raise GenerationFailed("Ollama ended the answer without a final message")
+        return final, "".join(content), "".join(thinking)
 
 
 def context_warnings(

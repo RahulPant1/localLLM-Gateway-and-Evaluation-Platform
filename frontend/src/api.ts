@@ -107,6 +107,10 @@ export interface RequestRecord {
   routing_mode: string;
   think: boolean | null;
   max_tokens: number | null;
+  // Earlier turns sent by an API client with this prompt.
+  history: { role: "user" | "assistant"; content: string }[];
+  // "api" = came from another tool through the OpenAI-compatible endpoint.
+  source: "ui" | "api";
   created_at: string;
   executions: Execution[];
   routing: RoutingDecision | null;

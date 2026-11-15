@@ -42,6 +42,12 @@ class GenerationTimeout(GenerationFailed):
     code = "generation_timeout"
 
 
+class LowMemory(ProviderError):
+    """The machine has too little free memory to run a model safely."""
+
+    code = "low_memory"
+
+
 class ModelInfo(BaseModel):
     name: str
     size_bytes: int
@@ -125,6 +131,10 @@ class ModelProvider(ABC):
     @abstractmethod
     async def list_loaded(self) -> list[LoadedModel]:
         """Return models currently held in memory."""
+
+    async def unload(self, model: str) -> None:  # noqa: B027 - optional for providers
+        """Remove a model from memory, releasing everything its process holds.
+        Providers that cannot do this leave it as a no-op."""
 
     @abstractmethod
     async def generate(

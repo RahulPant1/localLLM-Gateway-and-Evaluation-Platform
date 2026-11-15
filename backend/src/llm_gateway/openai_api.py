@@ -33,6 +33,8 @@ STATUS_FOR_CODE = {
     "provider_unavailable": 503,
     "generation_timeout": 504,
     "generation_failed": 502,
+    "thinking_exhausted": 502,
+    "low_memory": 503,
 }
 
 

@@ -1,4 +1,4 @@
-import type { Execution } from "../api";
+import { ranOutWhileThinking, type Execution } from "../api";
 import { STATUS_TEXT, WARNING_TEXT, seconds, pretty } from "../format";
 import { useNow } from "../hooks";
 import { Markdown } from "./Markdown";
@@ -21,9 +21,11 @@ interface Props {
   execution: Execution;
   /** When given, the card offers to continue the conversation from this answer. */
   onContinue?: () => void;
+  /** When given, a run that ran out of room while thinking offers to run again without it. */
+  onRetry?: () => void;
 }
 
-export function ExecutionCard({ execution, onContinue }: Props) {
+export function ExecutionCard({ execution, onContinue, onRetry }: Props) {
   const m = execution.metrics ?? {};
   return (
     <article className="card">
@@ -37,7 +39,8 @@ export function ExecutionCard({ execution, onContinue }: Props) {
         )}
         {execution.status === "running" && (
           <span className="muted small">
-            loading or generating, <Elapsed execution={execution} />
+            {execution.response || execution.thinking ? "generating" : "loading the model"},{" "}
+            <Elapsed execution={execution} />
           </span>
         )}
         {execution.status === "completed" && (
@@ -51,15 +54,25 @@ export function ExecutionCard({ execution, onContinue }: Props) {
 
       {execution.status === "failed" && (
         <p className="error">
-          <strong>{execution.error_code}</strong>: {execution.error_detail}
+          <strong>{ranOutWhileThinking(execution) ? "Failed" : execution.error_code}</strong>:{" "}
+          {execution.error_detail}
         </p>
+      )}
+      {onRetry && ranOutWhileThinking(execution) && (
+        <button className="secondary flat" onClick={onRetry}>
+          Run again without thinking
+        </button>
       )}
       {execution.warnings.map((w) => (
         <p key={w} className="warning">
           {WARNING_TEXT[w] ?? w}
         </p>
       ))}
-      {execution.status === "completed" && (
+      {execution.status === "running" && !execution.response && execution.thinking && (
+        <p className="muted small">Thinking before it answers…</p>
+      )}
+      {/* While running, `response` holds the text generated so far. */}
+      {(execution.status === "completed" || (execution.status === "running" && execution.response)) && (
         <div className="response">
           {execution.response ? <Markdown text={execution.response} /> : <span className="muted">(empty response)</span>}
         </div>

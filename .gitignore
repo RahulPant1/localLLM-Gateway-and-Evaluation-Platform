@@ -13,8 +13,8 @@ __pycache__/
 dist/
 build/
 
-# Application data (SQLite)
-data/
+# Application data (SQLite), at the project root only: backend/tests/data holds test prompts
+/data/
 *.db
 *.db-journal
 *.db-wal

@@ -31,7 +31,7 @@ export function Workspace({ models, modelsError, onEvaluate }: Props) {
         setError((e as Error).message);
       }
     },
-    running ? 1000 : null,
+    running ? 500 : null,
     [current?.id, running],
   );
 

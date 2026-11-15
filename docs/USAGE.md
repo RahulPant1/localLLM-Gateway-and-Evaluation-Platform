@@ -49,6 +49,22 @@ The first tab summarises everything stored, for the last 7 days, 30 days or all 
 
 To fill it with a meaningful sample, paste [sample_batch_prompts.txt](sample_batch_prompts.txt) (28 prompts, four per task type) into **Batch runs**, run it on all models, then judge it in the **Evaluate** tab.
 
+## Answers appear while they are written
+
+In the Workspace, a follow-up chat and an open batch result, the answer text grows on screen while the model generates it, refreshed about twice a second. A thinking model first shows "Thinking before it answers…"; its reasoning is under **Thinking**. Switching tabs or refreshing the page does not lose the answer: the model keeps running in the backend and the screen picks the text up again.
+
+## When a model runs out of room while thinking
+
+A thinking model can spend its whole context window on reasoning and leave nothing for the answer. Such a run is marked **Failed: ran out of room while thinking**, not Completed; its reasoning is kept under **Thinking**.
+
+The failed card has a **Run again without thinking** button. It runs the same prompt on the same model with thinking off.
+
+- **Where the second attempt goes:** into the same run, next to the failed one, labelled "Attempt 2, thinking off". It does not create a separate entry in History. In a batch it stays in the batch, and the grid cell for that prompt and model then shows the second attempt.
+- **The failed attempt stays on record:** it still counts as one failed run in the batch totals and the Overview. So a batch can read "112 completed, 2 failed" when every prompt has an answer.
+- **Exports and evaluation use the answer that succeeded:** the batch export, the Evaluate tab's judge text and `/evaluate-batch` include completed answers only, so they contain the second attempt and never the failure.
+- **In a follow-up chat** the button is on the failed message, and the new attempt takes that message's place in the conversation.
+- Runs stored before this change still show as Completed with an empty answer.
+
 ## Automatic routing
 
 In the Workspace, **Automatic** lets the gateway choose the model; **Manual** lets you pick one or several. With Automatic, the response shows a routing panel: the chosen model, task type, complexity, confidence, fallback and the reasons.
@@ -100,6 +116,13 @@ In a tool's settings, choose the "OpenAI compatible" provider type, base URL `ht
 - **Conversations with `auto`** are routed by their first user message, so a conversation stays on one model.
 - **Supported:** text messages, `stream`, `max_tokens`, `temperature`, `reasoning_effort`. **Ignored:** tools (function calling), `stop`, `top_p`, `response_format`. Images are rejected.
 - **One at a time:** a call waits its turn behind a running batch or another call. The gateway listens on this machine only.
+
+## Memory guard and resuming a batch
+
+Ollama keeps a cache of every prompt the loaded model has seen, in system memory (about 120 MB per prompt, up to 8 GB), and only releases it when the model is unloaded. A long batch on one model can therefore use up all of WSL's memory, at which point WSL stalls completely.
+
+- **Guard:** before every run the gateway checks free memory. Below `GATEWAY_MIN_FREE_MEMORY_MB` (1500 by default) it unloads the loaded model, which releases the cache, and carries on; the model reloads in a few seconds. The status strip shows **RAM free** and how often memory was freed. If memory is critically low even with no model loaded, the run fails with `low_memory` and does not start.
+- **Resume:** a batch that was cut short (backend restarted, time limit hit, low memory) shows a **Resume N interrupted runs** button. It reruns only those; completed answers are kept.
 
 ## Batch runs and later evaluation
 

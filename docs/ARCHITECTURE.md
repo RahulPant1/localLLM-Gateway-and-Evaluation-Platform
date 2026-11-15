@@ -1,13 +1,13 @@
 # Architecture and Agreed Decisions
 
-Status: architecture approved on 2026-11-14. Phases 0 to 3 are complete (2026-11-15), plus judging by an external judge (Evaluate tab) and the Overview tab. The in-app Claude API judge (rest of Phase 4) is on hold until the owner has an API key. How to run and use the app: [USAGE.md](USAGE.md).
+Status: architecture approved on 2026-11-14. Phases 0 to 3 are complete (2026-11-15), plus judging by an external judge (Evaluate tab) and the Overview tab. The in-app Claude API judge (rest of Phase 4) is not built; judging is done by an external judge instead. How to run and use the app: [USAGE.md](USAGE.md).
 
 This document records what was found in the environment, the architecture that was agreed, and the reasons. Requirements are in [DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md).
 
 ## Working agreement
 
 - Build iteratively, one phase at a time. Each phase ends with passing tests and a short review before the next begins.
-- Explain design decisions as they come up; the owner wants to understand them, not only receive code.
+- Record design decisions and the reasons for them, not only the code.
 - Do not reinstall Ollama, download models, or change the Ollama service or `.wslconfig` without asking.
 
 ## Environment (inspected 2026-11-14)
@@ -33,7 +33,7 @@ This document records what was found in the environment, the architecture that w
 
 Notes:
 
-- Llama 3.2 3B is listed in the requirements but is not installed. The app discovers models dynamically, so it will appear if the owner installs it later.
+- Llama 3.2 3B is listed in the requirements but is not installed. The app discovers models dynamically, so it will appear if it is installed later.
 - A second model store exists at `~/.ollama/models` (12 GB: `mistral`, `biomistral-7b`, a duplicate MedGemma). The Ollama service does not read it. Leave it alone.
 - No two models fit in VRAM together. Every change of model is a swap costing several seconds.
 
@@ -63,7 +63,7 @@ Separate tables so that a failure in one stage never alters another stage's reco
 - `routing_decisions`: category, complexity, selected model, fallback, confidence, explanation, escalation flag.
 - `executions`: model, response, thinking text (stored separately), timestamps, duration, status, error. One request can have many executions (comparison).
 - `evaluations`: judge model, rubric version, dimension scores, overall score, summary, strengths, weaknesses, recommendations, critical issues, status.
-- `human_reviews`: the owner's annotation or score override; the original evaluation is kept.
+- `human_reviews`: a person's annotation or score override; the original evaluation is kept.
 
 ### Routing
 
@@ -122,7 +122,7 @@ Consequences for the router (Phase 3):
 
 ## Phase 2 additions (2026-11-15)
 
-Phase 2 went beyond the original table at the owner's request. Batch evaluation is the owner's main workflow.
+Phase 2 went beyond the original table: batch evaluation (many prompts across all models, stored for later judging) is the main workflow.
 
 - **Batches.** `POST /api/batches` runs many prompts on many models (all installed models by default) and stores every output. Executions are grouped by model, with the loaded model first.
 - **Export for judges.** `GET /api/batches/{id}/export` returns completed outputs keyed by `execution_id`. Blind by default: no model names, no thinking text.
@@ -168,7 +168,7 @@ On the held-out set the classifier was needed for 11 of 25 prompts. Both wrong-m
 
 ## Evaluation by Claude Code (2026-11-15)
 
-The owner may not have a Claude API key, so the first working judge is Claude Code itself, not the API.
+The first working judge is Claude Code itself, not the API, so no API key is needed.
 
 - **Rubric** in `config/rubric.yaml`: version, the five fixed dimensions with descriptions and score anchors, and weights. The overall score is the weighted mean of the scored dimensions, computed by the gateway. Each stored evaluation records the rubric version.
 - **Judge instructions** in `config/judge_prompt.md`: how to judge and the result format. Written to be reused unchanged as the system prompt of the API judge later.
@@ -196,40 +196,36 @@ Caveat: Claude Code judging is only as blind as the judge's discipline. The same
 
 - `openai_api.py`: `POST /v1/chat/completions` and `GET /v1/models`. A call becomes an ordinary stored request (`source = 'api'`), run by the same Runner and queue, so History, evaluation and the Overview cover it with no extra code.
 - API clients send the whole conversation each time, so the earlier turns are stored on the request (`requests.history`, migration 5) instead of through `parent_execution_id`. Migration 5 also adds `source` and `temperature`.
-- **Streaming:** `ModelProvider.generate` takes an optional `on_delta` callback; with it the Ollama provider reads `/api/chat` line by line. The Runner publishes `start`, `delta` and `end` events to a per-request queue that the HTTP handler turns into server-sent events. Requests made in the app do not stream; they still poll.
+- **Streaming:** `ModelProvider.generate` takes an optional `on_delta` callback; with it the Ollama provider reads `/api/chat` line by line. The Runner publishes `start`, `delta` and `end` events to a per-request queue that the HTTP handler turns into server-sent events. Requests made in the app poll for the growing text (next point).
+- **Live text in the app:** the Runner always streams from the provider and keeps the text so far in memory (`Runner._live`). `GET /api/requests/{id}`, the thread and the batch detail put it on executions that are still running, and the screens poll every 0.5 s. Polling was kept instead of a browser event stream because it survives a page refresh and needed no new frontend plumbing; the cost is text arriving in half-second steps. Partial text is never written to the database.
+- **`thinking_exhausted`:** an empty answer with reasoning present, where generation stopped at the token limit or the context filled, is stored as a failed execution (reasoning, timings and token counts kept). It does not trigger the routing fallback.
+- **Second attempts:** `POST /api/executions/{id}/retry` adds another execution to the same request with `executions.think = 0` (migration 6), which overrides the request's thinking setting for that attempt. The request therefore keeps both attempts, stays in its batch, and exports (completed executions only) carry the answer that succeeded. The batch grid shows the latest attempt per model. A follow-up message is the exception: it is retried as a new request with the same parent, so it takes the failed message's place in the thread.
 - A streaming client that disconnects cancels the job, which closes the Ollama connection and frees the GPU. A non-streaming call runs to completion.
 - If the routed model fails after sending part of an answer and the fallback model runs, the stream contains both parts. Ollama failures normally happen before the first piece.
 - No authentication: uvicorn binds to 127.0.0.1.
 
+## Guardrails after the WSL stall (2026-11-15)
+
+A 112-run batch stalled WSL for 21 minutes after 13 prompts on one model. Cause, from the Ollama and kernel logs: Ollama's per-model prompt cache grew by about 120 MB per prompt (1.8 GB after 13; its limit is 8 GB, WSL has 5.8 GB and no swap), the kernel reported page allocation failures, and nothing in WSL could make progress, including the gateway's own 300 s timeout.
+
+- **`MemoryGuard`** (`execution.py`): checked inside the queue before every generation. Below `min_free_memory_mb` it unloads loaded models through the provider (`unload`, Ollama `keep_alive: 0`), waits for memory to return, and raises `LowMemory` (`low_memory`, 503) if memory is still under a third of the limit. The memory reading is stored in each execution's metrics.
+- **Database lock** (`_SafeConnection` in `store.py`): the one SQLite connection is used by the event loop and by worker threads serving read requests. Concurrent use corrupted a cursor once ("tuple index out of range", a 500). Every statement now runs and is read fully under a lock, and a transaction holds the lock throughout.
+- **Resume**: `POST /api/batches/{id}/resume` requeues executions that failed with `interrupted`, `generation_timeout`, `low_memory` or `provider_unavailable`.
+- `nvidia-smi` timing out no longer makes `/api/status` fail.
+- Not changed: Ollama's own cache limit and the WSL memory or swap settings. Both would address the cause more directly; they are changes outside the app.
+
 ## Known risks
 
 - Model swap latency dominates comparisons and LLM-classified routes. Phase 1 measures it before the router design is final.
-- WSL has 6 GB RAM and no swap. Ollama, the backend and a dev server together may run out of memory. Raising the cap is the owner's decision.
+- WSL has 6 GB RAM and no swap. Ollama, the backend and a dev server together may run out of memory. Raising the cap is a change outside the app.
 - Ollama truncates over-long prompts silently. Set explicit context sizes per model and warn when input exceeds them.
 - `deepseek-r1` and `qwen3.5` emit thinking text. Store it separately from the answer and exclude it from evaluation.
 - Evaluation sends the request and response to Anthropic. Do not use real patient data with MedGemma when evaluation is on.
 - Judge scores are a measurement, not ground truth; hence rubric versioning and human override.
 
-## Resuming in a new session
-
-The architecture was planned in a Claude Code session on the Windows side, which is no longer attached to this project. Everything agreed there is in this file. To continue:
-
-1. Open this folder in VS Code through the WSL extension (`WSL: Connect to WSL`, then open `/home/rahul/localLLM-Gateway-and-Evaluation-Platform`).
-2. Start Claude Code and say: "Read DEVELOPMENT_PLAN.md and docs/ARCHITECTURE.md, then begin Phase 0."
-
-What Phase 0 should do, in order:
-
-1. `git init` and add a `.gitignore` (must cover `.env`, the virtualenv, the SQLite file, `node_modules`).
-2. Create the `uv` project for the backend. Python 3.10.12 is the system version; `uv` can install a newer one for the project without touching the system.
-3. Add configuration loading (Ollama URL, database path, judge model, optional API key) with a `.env.example`.
-4. Add the test harness and a health endpoint with one passing test.
-5. Stop and review with the owner before Phase 1.
-
-Each later phase starts the same way: propose the detailed steps for that phase, get the owner's agreement, then build and test.
-
 ## Project location
 
-The project lives in the WSL filesystem, not on the Windows drive. Reason: SQLite locking and Node file-watching are slow and unreliable across the Windows/WSL file boundary. The original Windows folder was removed after the move.
+The project lives in the WSL filesystem, not on the Windows drive. Reason: SQLite locking and Node file-watching are slow and unreliable across the Windows/WSL file boundary.
 
 ## Judge model options
 

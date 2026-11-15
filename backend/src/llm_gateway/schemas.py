@@ -81,6 +81,8 @@ class Execution(BaseModel):
     request_id: str
     model: str
     status: ExecutionStatus
+    # Set on a second attempt that overrides the request's thinking setting.
+    think: bool | None = None
     response: str | None = None
     # Reasoning text, stored apart from the answer and never sent to a judge.
     thinking: str | None = None
@@ -146,6 +148,11 @@ class FollowUpCreate(BaseModel):
     prompt: str = Field(min_length=1)
     # None = keep the conversation's setting.
     think: bool | None = None
+
+
+class RetryCreate(BaseModel):
+    # False = run again with thinking off (the usual reason to retry).
+    think: bool | None = False
 
 
 class ThreadTurn(BaseModel):

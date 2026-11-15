@@ -60,6 +60,8 @@ export interface Execution {
   request_id: string;
   model: string;
   status: ExecutionStatus;
+  // False on a second attempt that was run with thinking off.
+  think: boolean | null;
   response: string | null;
   thinking: string | null;
   error_code: string | null;
@@ -270,7 +272,9 @@ export interface SystemStatus {
     utilization_percent: number | null;
     error: string | null;
   };
-  queue: { busy: boolean; running_model: string | null; waiting: number };
+  // System memory (of WSL when running there). Below guard_mb, models are unloaded to free it.
+  memory: { available_mb: number | null; total_mb: number | null; guard_mb: number };
+  queue: { busy: boolean; running_model: string | null; waiting: number; memory_unloads: number };
   router: { classifier_model: string | null; llm_enabled: boolean; registry_error: string | null };
   evaluator: { configured: boolean; judge_model: string };
 }
@@ -321,6 +325,9 @@ export const api = {
     think: boolean | null;
   }) => call<BatchSummary>("/api/batches", body),
   thread: (executionId: string) => call<Thread>(`/api/executions/${executionId}/thread`),
+  /** Run the same prompt again on the same model with thinking off. */
+  retryWithoutThinking: (executionId: string) =>
+    call<RequestRecord>(`/api/executions/${executionId}/retry`, { think: false }),
   followUp: (executionId: string, prompt: string) =>
     call<RequestRecord>(`/api/executions/${executionId}/follow-ups`, { prompt }),
   batches: () => call<BatchSummary[]>("/api/batches"),
@@ -337,10 +344,19 @@ export const api = {
   taskTypes: () => call<Taxonomy>("/api/task-types"),
   overview: (days: number | null) =>
     call<Overview>(days ? `/api/overview?days=${days}` : "/api/overview"),
+  /** Run again the parts of a batch that were interrupted or timed out. */
+  resumeBatch: (id: string) => call<BatchSummary>(`/api/batches/${id}/resume`, {}),
   batchScores: (id: string) => call<ModelScores[]>(`/api/batches/${id}/scores`),
   exportUrl: (id: string, blind: boolean) =>
     `/api/batches/${id}/export?blind=${blind}&download=true`,
 };
+
+/** The model used every available token on reasoning and gave no answer. */
+export const ranOutWhileThinking = (e: Execution) =>
+  e.status === "failed" && e.error_code === "thinking_exhausted";
+
+/** Failures caused by the environment (a restart, a timeout, low memory), worth running again. */
+export const RESUMABLE_CODES = ["interrupted", "generation_timeout", "low_memory", "provider_unavailable"];
 
 export const isActive = (e: Execution) => e.status === "queued" || e.status === "running";
 

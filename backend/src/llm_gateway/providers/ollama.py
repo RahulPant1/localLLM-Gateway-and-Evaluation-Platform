@@ -137,6 +137,11 @@ class OllamaProvider(ModelProvider):
             for entry in (await self._json("GET", "/api/ps")).get("models", [])
         ]
 
+    async def unload(self, model: str) -> None:
+        # keep_alive 0 ends the model's runner process, which also frees the
+        # prompt cache it has built up in system memory.
+        await self._json("POST", "/api/generate", payload={"model": model, "keep_alive": 0})
+
     def _chat_payload(self, request: GenerationRequest, model: ModelInfo, stream: bool) -> dict:
         messages = []
         if request.system:

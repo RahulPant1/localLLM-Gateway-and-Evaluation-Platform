@@ -6,6 +6,7 @@ import {
   type Execution,
   type ModelEntry,
   type ModelScores,
+  RESUMABLE_CODES,
 } from "../api";
 import { meanScore, seconds, snippet, when } from "../format";
 import { usePolling } from "../hooks";
@@ -76,6 +77,11 @@ export function Batches({ models, modelsError, onEvaluate }: Props) {
   usePolling(async () => setBatches(await api.batches().catch(() => batches)), 3000, []);
 
   const active = detail ? detail.counts.queued + detail.counts.running > 0 : false;
+  const resumable = detail
+    ? detail.requests
+        .flatMap((r) => r.executions)
+        .filter((e) => e.status === "failed" && RESUMABLE_CODES.includes(e.error_code ?? "")).length
+    : 0;
   usePolling(
     async () => {
       if (!openId) return setDetail(null);
@@ -180,6 +186,21 @@ export function Batches({ models, modelsError, onEvaluate }: Props) {
                 {done} of {total} runs finished
                 {detail.counts.failed > 0 && `, ${detail.counts.failed} failed`} · {detail.evaluated_count} evaluated
               </span>
+              {!active && resumable > 0 && (
+                <button
+                  className="secondary flat"
+                  onClick={() =>
+                    api
+                      .resumeBatch(detail.id)
+                      .then(() => api.batch(detail.id))
+                      .then(setDetail)
+                      .catch((e) => setError((e as Error).message))
+                  }
+                  title="Runs that were interrupted or timed out, for example by a restart. Completed answers are kept."
+                >
+                  Resume {resumable} interrupted {resumable === 1 ? "run" : "runs"}
+                </button>
+              )}
               <button className="secondary flat" disabled={detail.counts.completed === 0} onClick={() => onEvaluate(`b:${detail.id}`)}>
                 {detail.counts.completed > 0 && detail.evaluated_count >= detail.counts.completed
                   ? "Evaluate again"
@@ -209,7 +230,8 @@ export function Batches({ models, modelsError, onEvaluate }: Props) {
                         <span className="muted">{i + 1}.</span> {snippet(r.prompt, 60)}
                       </th>
                       {detail.models.map((m) => {
-                        const execution = r.executions.find((e) => e.model === m);
+                        // The latest attempt: a run that failed and was run again shows the second result.
+                        const execution = [...r.executions].reverse().find((e) => e.model === m);
                         return execution ? (
                           <Cell
                             key={m}
@@ -279,7 +301,13 @@ export function Batches({ models, modelsError, onEvaluate }: Props) {
             {picked && (
               <RequestView
                 key={cell}
-                request={{ ...picked, executions: picked.executions.filter((e) => e.id === cell) }}
+                // Every attempt of the chosen model on this prompt.
+                request={{
+                  ...picked,
+                  executions: picked.executions.filter(
+                    (e) => e.model === picked.executions.find((x) => x.id === cell)?.model,
+                  ),
+                }}
               />
             )}
           </>

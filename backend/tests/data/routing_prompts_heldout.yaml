@@ -1,0 +1,35 @@
+# Held-out prompts. The routing rules were NOT tuned on these, so the accuracy
+# here is the honest estimate. Do not adjust rules to fit this file; add new
+# prompts to routing_prompts.yaml instead and keep this one for checking.
+
+- {category: general_qa, prompt: "What causes the seasons on Earth?"}
+- {category: general_qa, prompt: "Can you suggest a good name for a bakery that specialises in sourdough?"}
+- {category: general_qa, prompt: "Draft a LinkedIn post announcing that I have joined a new company as a data analyst."}
+- {category: general_qa, prompt: "How do vaccines train the immune system?"}
+- {category: general_qa, prompt: "Shorten this paragraph to two sentences: Our company was founded in 1998 by two friends who shared a passion for cycling. Over the years it has grown from a small workshop to a national retailer with forty stores."}
+
+- {category: classification, prompt: "Decide if each of these product reviews is genuine or fake:\n1. Best purchase ever!!! Five stars!!!\n2. Arrived a day late but works as described."}
+- {category: classification, prompt: "What is the tone of this message: angry, neutral or happy? 'I have been waiting for 40 minutes and nobody has answered my call.'"}
+- {category: classification, prompt: "Sort these expenses into travel, food or office supplies: taxi to airport, printer paper, team lunch, hotel stay."}
+
+- {category: extraction, prompt: "Here is a job posting. What is the salary range, location and required years of experience?\n\n'Senior Analyst, Bengaluru. 6-9 years experience. CTC 22-28 LPA.'"}
+- {category: extraction, prompt: "Pull the tracking number and delivery date out of this SMS: 'Your parcel AWB 7741220913 will be delivered on 14 Dec between 10am and 2pm.'"}
+- {category: extraction, prompt: "Which medicines and doses are named in this pharmacy receipt? 'Paracetamol 500 mg x10, Cetirizine 10 mg x5, Vitamin D3 60000 IU x4'"}
+
+- {category: structured_output, prompt: "Make a table of the planets in the solar system with their diameter and number of moons."}
+- {category: structured_output, prompt: "I need a JSON schema for a user profile with name, email, age and a list of interests."}
+- {category: structured_output, prompt: "Turn this shopping list into CSV with item and quantity columns: 2 apples, 1 loaf of bread, 6 eggs."}
+
+- {category: reasoning, prompt: "I can either take a job paying 18 lakh in my home city or one paying 24 lakh in a city where rent is three times higher. Which is the better financial choice and what else should I weigh?"}
+- {category: reasoning, prompt: "There are five houses in a row, each a different colour. The green house is immediately to the left of the white one. The red house is in the middle. Where can the green house be?"}
+- {category: reasoning, prompt: "Is it better for a small business to lease or buy its delivery vans? Walk me through the considerations."}
+- {category: reasoning, prompt: "A shop marks up a product by 25% and then offers a 20% discount. Is the final price higher or lower than the cost, and by how much?"}
+
+- {category: coding, prompt: "My React component re-renders every time the parent updates. How can I stop that?"}
+- {category: coding, prompt: "Give me a Dockerfile for a FastAPI app that uses uvicorn."}
+- {category: coding, prompt: "What's the difference between a list and a tuple in Python?"}
+- {category: coding, prompt: "This query is slow, how can I speed it up?\nSELECT * FROM orders o JOIN customers c ON o.customer_id = c.id WHERE c.country = 'IN' ORDER BY o.created_at DESC;"}
+
+- {category: medical, prompt: "Chest X-ray report: bilateral lower zone infiltrates, blunting of the right costophrenic angle. What does this suggest?"}
+- {category: medical, prompt: "Write a short referral letter for a 58-year-old man with poorly controlled hypertension and newly raised creatinine of 2.1 mg/dL."}
+- {category: medical, prompt: "Post-operative progress note: Day 2 after laparoscopic cholecystectomy, afebrile, tolerating oral fluids, wound clean. Summarise the patient's status."}

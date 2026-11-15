@@ -6,6 +6,7 @@ local file, so they are called directly from async code.
 
 import json
 import sqlite3
+import threading
 import uuid
 from collections import defaultdict
 from contextlib import contextmanager
@@ -122,6 +123,10 @@ MIGRATIONS = [
     ALTER TABLE requests ADD COLUMN source TEXT NOT NULL DEFAULT 'ui';
     ALTER TABLE requests ADD COLUMN temperature REAL;
     """,
+    # 6: a second attempt on the same request can override the thinking setting.
+    """
+    ALTER TABLE executions ADD COLUMN think INTEGER;
+    """,
 ]
 
 
@@ -133,13 +138,69 @@ def _id() -> str:
     return uuid.uuid4().hex
 
 
+# Failures caused by the environment, not by the prompt or the model: worth
+# running again once the cause is gone.
+RESUMABLE_CODES = (
+    "interrupted",
+    "generation_timeout",
+    "low_memory",
+    "provider_unavailable",
+)
+
+
+class _Rows:
+    """The complete result of one statement, already read from the database."""
+
+    def __init__(self, rows: list, rowcount: int) -> None:
+        self._rows = rows
+        self.rowcount = rowcount
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self) -> list:
+        return self._rows
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class _SafeConnection:
+    """One SQLite connection shared by the event loop and the worker threads
+    that serve read requests. Every statement runs and is read to the end
+    under a lock; a cursor read while another thread used the connection
+    returned corrupt rows ("tuple index out of range")."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+        self.lock = threading.RLock()
+
+    def execute(self, sql: str, params=()) -> _Rows:
+        with self.lock:
+            cursor = self._connection.execute(sql, params)
+            return _Rows(cursor.fetchall(), cursor.rowcount)
+
+    def executemany(self, sql: str, rows) -> None:
+        with self.lock:
+            self._connection.executemany(sql, rows)
+
+    def executescript(self, script: str) -> None:
+        with self.lock:
+            self._connection.executescript(script)
+
+    def close(self) -> None:
+        with self.lock:
+            self._connection.close()
+
+
 class Store:
     def __init__(self, path: Path | str) -> None:
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         # isolation_level=None: every statement commits at once unless inside _transaction().
-        self._db = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
-        self._db.row_factory = sqlite3.Row
+        connection = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
+        connection.row_factory = sqlite3.Row
+        self._db = _SafeConnection(connection)
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA foreign_keys=ON")
         self._migrate()
@@ -154,13 +215,16 @@ class Store:
 
     @contextmanager
     def _transaction(self):
-        self._db.execute("BEGIN")
-        try:
-            yield
-        except BaseException:
-            self._db.execute("ROLLBACK")
-            raise
-        self._db.execute("COMMIT")
+        # The lock is held for the whole transaction, so no other thread's
+        # statement can land inside it.
+        with self._db.lock:
+            self._db.execute("BEGIN")
+            try:
+                yield
+            except BaseException:
+                self._db.execute("ROLLBACK")
+                raise
+            self._db.execute("COMMIT")
 
     # ---- writing requests and executions ----
 
@@ -263,16 +327,17 @@ class Store:
                 )
         return batch_id
 
-    def add_execution(self, request_id: str, model: str) -> Execution:
-        """Add a queued execution to an existing request (routed model or fallback)."""
+    def add_execution(self, request_id: str, model: str, think: bool | None = None) -> Execution:
+        """Add a queued execution to an existing request: the routed model, the
+        fallback, or a second attempt. `think` overrides the request's setting."""
         execution_id = _id()
         position = self._db.execute(
             "SELECT COUNT(*) FROM executions WHERE request_id = ?", (request_id,)
         ).fetchone()[0]
         self._db.execute(
-            "INSERT INTO executions (id, request_id, position, model, status, created_at)"
-            " VALUES (?,?,?,?,'queued',?)",
-            (execution_id, request_id, position, model, _now()),
+            "INSERT INTO executions (id, request_id, position, model, status, created_at, think)"
+            " VALUES (?,?,?,?,'queued',?,?)",
+            (execution_id, request_id, position, model, _now(), think),
         )
         return self.get_execution(execution_id)[0]
 
@@ -360,12 +425,53 @@ class Store:
             ),
         )
 
-    def fail_execution(self, execution_id: str, code: str, detail: str) -> None:
+    def fail_execution(
+        self,
+        execution_id: str,
+        code: str,
+        detail: str,
+        *,
+        thinking: str | None = None,
+        queue_wait_ms: float | None = None,
+        execution_ms: float | None = None,
+        metrics: dict | None = None,
+        warnings: list[str] | None = None,
+    ) -> None:
+        """Record a failure. The optional values keep what the model did
+        produce (its reasoning, timings, token counts) when it ran but gave
+        no usable answer."""
         self._db.execute(
-            "UPDATE executions SET status='failed', error_code=?, error_detail=?, finished_at=?"
-            " WHERE id=?",
-            (code, detail, _now(), execution_id),
+            "UPDATE executions SET status='failed', error_code=?, error_detail=?, finished_at=?,"
+            " thinking=?, queue_wait_ms=?, execution_ms=?, metrics=?,"
+            " warnings=COALESCE(?, warnings) WHERE id=?",
+            (
+                code,
+                detail,
+                _now(),
+                thinking,
+                queue_wait_ms,
+                execution_ms,
+                None if metrics is None else json.dumps(metrics),
+                None if warnings is None else json.dumps(warnings),
+                execution_id,
+            ),
         )
+
+    def requeue_resumable(self, batch_id: str) -> int:
+        """Put a batch's interrupted or timed-out executions back in the queue.
+
+        Completed answers and failures caused by the model are left alone.
+        """
+        marks = ",".join("?" * len(RESUMABLE_CODES))
+        cursor = self._db.execute(
+            "UPDATE executions SET status='queued', error_code=NULL, error_detail=NULL,"
+            " started_at=NULL, finished_at=NULL, thinking=NULL, queue_wait_ms=NULL,"
+            " execution_ms=NULL, metrics=NULL, warnings='[]'"
+            f" WHERE status='failed' AND error_code IN ({marks})"
+            " AND request_id IN (SELECT id FROM requests WHERE batch_id = ?)",
+            (*RESUMABLE_CODES, batch_id),
+        )
+        return cursor.rowcount
 
     def fail_unfinished(self) -> int:
         """Mark executions left queued or running by a previous process as failed."""
@@ -418,6 +524,7 @@ class Store:
         for row in rows:
             data = dict(row)
             data.pop("position")
+            data["think"] = None if data["think"] is None else bool(data["think"])
             data["metrics"] = json.loads(data["metrics"]) if data["metrics"] else None
             data["warnings"] = json.loads(data["warnings"])
             found[row["request_id"]].append(

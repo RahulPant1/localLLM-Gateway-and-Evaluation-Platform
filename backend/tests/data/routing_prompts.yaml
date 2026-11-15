@@ -1,0 +1,76 @@
+# Labelled prompts for the router. Each has the category a person would assign.
+# Add your own real prompts here; `uv run python scripts/router_report.py` shows
+# how the router handles each one.
+
+- {category: general_qa, prompt: "What is the capital of Australia?"}
+- {category: general_qa, prompt: "Explain how photosynthesis works in simple terms."}
+- {category: general_qa, prompt: "Who wrote Pride and Prejudice and when was it published?"}
+- {category: general_qa, prompt: "Summarise the main causes of the First World War in a short paragraph."}
+- {category: general_qa, prompt: "Translate 'Where is the nearest train station?' into French and Spanish."}
+- {category: general_qa, prompt: "Write a polite email asking my landlord to fix the leaking tap in the kitchen."}
+- {category: general_qa, prompt: "What's the difference between weather and climate?"}
+- {category: general_qa, prompt: "Give me five ideas for a team offsite activity."}
+- {category: general_qa, prompt: "How does a credit score work in India?"}
+- {category: general_qa, prompt: "Rewrite this sentence to sound more formal: we gotta wrap this up by friday or the client is gonna be mad."}
+- {category: general_qa, prompt: "Is it okay to take ibuprofen for a headache after drinking coffee?"}
+- {category: general_qa, prompt: "Tell me about the history of the Olympic Games."}
+- {category: general_qa, prompt: "I have written a book on overseas education options for Indian students. Provide me a summary of what you are good at for doing my book review."}
+- {category: general_qa, prompt: "Describe what a blockchain is to someone who has never used a computer."}
+
+- {category: classification, prompt: "Classify the sentiment of this review as positive, negative or neutral: 'The battery lasts two days but the screen scratches easily.'"}
+- {category: classification, prompt: "Is this email spam or not? 'Congratulations! You have won a free cruise. Click here to claim your prize now.'"}
+- {category: classification, prompt: "Categorise each of these support tickets as billing, technical or account: 1) I was charged twice. 2) The app crashes on login. 3) How do I change my email?"}
+- {category: classification, prompt: "Which category does this news headline belong to: sports, politics, business or technology? 'Central bank holds interest rates steady for third quarter'"}
+- {category: classification, prompt: "Label the following tweet as toxic or non-toxic: 'you people never get anything right, absolute clowns'"}
+- {category: classification, prompt: "Assign a priority (high, medium, low) to this bug report: 'Checkout button does nothing on Safari, customers cannot pay.'"}
+- {category: classification, prompt: "Tell me whether this statement is a fact or an opinion: 'Mumbai is the best city in India.'"}
+- {category: classification, prompt: "Here are some customer comments. Tag each as complaint, praise or question.\n- Love the new design!\n- Why was my order delayed?\n- This is the worst service I've had."}
+
+- {category: extraction, prompt: "Extract all the dates and amounts from this text: 'Invoice 4471 issued on 3 March 2025 for Rs 18,500, due 2 April 2025. A late fee of Rs 750 applies after 10 April.'"}
+- {category: extraction, prompt: "List all the people and companies mentioned in the following paragraph: 'Satya Nadella met Sundar Pichai at a Microsoft event while Tata Consultancy Services announced a new deal with Infosys.'"}
+- {category: extraction, prompt: "From the email below, pull out the meeting time, location and attendees.\n\nHi all, let's meet Thursday 3pm in Room 204. Priya, Arjun and Meera please join."}
+- {category: extraction, prompt: "Find every phone number and email address in this text: Contact Ravi at ravi.k@example.com or 98200 12345, or the office on 022-5550-1234."}
+- {category: extraction, prompt: "What are the key action items in this meeting transcript? 'Anil will send the budget by Monday. Neha to book the venue. We agreed to revisit pricing next quarter.'"}
+- {category: extraction, prompt: "Identify the skills listed in this resume snippet: 'Experienced analyst skilled in Excel, Tableau, stakeholder management and financial modelling.'"}
+- {category: extraction, prompt: "Read the contract clause below and tell me the notice period and the termination fee.\n\n'Either party may terminate with 60 days written notice. Early termination incurs a fee of 2 months' charges.'"}
+- {category: extraction, prompt: "Get the product name, price and warranty period from this listing: 'Zenith X200 headphones, now Rs 4,999, includes 18-month warranty.'"}
+
+- {category: structured_output, prompt: "Generate a JSON object describing a book with fields title, author, year and genres (an array)."}
+- {category: structured_output, prompt: "Create a markdown table comparing three laptop models with columns for price, weight and battery life."}
+- {category: structured_output, prompt: "Give me a CSV with 5 rows of sample customer data: id, name, city, signup_date."}
+- {category: structured_output, prompt: "Produce a YAML config for a web server with host, port, and a list of allowed origins."}
+- {category: structured_output, prompt: "Return a JSON array of the seven days of the week, each with a name and a boolean is_weekend."}
+- {category: structured_output, prompt: "Convert this into JSON: Name is Asha Rao, age 34, lives in Pune, works as a product manager."}
+- {category: structured_output, prompt: "Write a weekly meal plan as a table with rows for each day and columns for breakfast, lunch and dinner."}
+- {category: structured_output, prompt: "Output an XML document listing three countries with their capital and population."}
+
+- {category: reasoning, prompt: "A farmer has 17 sheep and all but 9 run away. How many are left? Explain your reasoning step by step."}
+- {category: reasoning, prompt: "Analyse the trade-offs between renting and buying a home in a city where prices are rising 8% a year."}
+- {category: reasoning, prompt: "Three friends split a bill of 3,600 rupees. One pays twice as much as each of the others. How much does each pay?"}
+- {category: reasoning, prompt: "Compare the pros and cons of a four-day work week for a 50-person software company and recommend whether to adopt it."}
+- {category: reasoning, prompt: "If all bloops are razzies and some razzies are lazzies, can we conclude that some bloops are lazzies? Justify your answer."}
+- {category: reasoning, prompt: "Our website conversion dropped 20% last week after we changed the checkout page and also started a new ad campaign. What are the possible root causes and how would you tell them apart?"}
+- {category: reasoning, prompt: "Why might a country with high inflation choose to raise interest rates, and what are the risks of doing so?"}
+- {category: reasoning, prompt: "Evaluate whether a startup with 12 months of runway should spend on hiring two engineers or on marketing. Think through the second-order effects."}
+- {category: reasoning, prompt: "A train leaves at 9:00 travelling 60 km/h. Another leaves the same station at 9:30 travelling 90 km/h on the same track. When does the second catch the first?"}
+
+- {category: coding, prompt: "Write a Python function that merges two sorted lists into one sorted list."}
+- {category: coding, prompt: "Why does this code throw an error?\n```js\nconst items = null;\nconsole.log(items.length);\n```"}
+- {category: coding, prompt: "Review this function and suggest improvements:\n\ndef avg(xs):\n    t = 0\n    for x in xs:\n        t = t + x\n    return t / len(xs)"}
+- {category: coding, prompt: "Write a SQL query to find the top 5 customers by total order value in the last 30 days."}
+- {category: coding, prompt: "How do I reverse a linked list in Java?"}
+- {category: coding, prompt: "Explain what this regex does: ^[\\w.+-]+@[\\w-]+\\.[\\w.]+$"}
+- {category: coding, prompt: "Create a bash script that backs up a folder to a timestamped tar.gz file."}
+- {category: coding, prompt: "Refactor this to use async/await instead of callbacks: fetchUser(id, function(user) { fetchOrders(user, function(orders) { render(orders); }); });"}
+- {category: coding, prompt: "What is the time complexity of binary search and why?"}
+- {category: coding, prompt: "I get 'TypeError: unsupported operand type(s) for +: int and str' in my script. What does it mean and how do I fix it?"}
+- {category: coding, prompt: "Write unit tests for a function is_palindrome(s) using pytest."}
+
+- {category: medical, prompt: "Summarise this discharge summary for the patient's family: 68-year-old male admitted with chest pain, troponin elevated, underwent PCI to LAD, discharged on aspirin 75 mg and atorvastatin 40 mg."}
+- {category: medical, prompt: "Patient is a 45-year-old female presenting with fatigue, weight gain and cold intolerance. TSH 12.4. What is the likely diagnosis and next steps?"}
+- {category: medical, prompt: "Interpret these lab results: Hemoglobin 9.2 g/dL, MCV 71 fL, ferritin 6 ng/mL."}
+- {category: medical, prompt: "From the radiology report below, what are the key findings?\n\nCT chest: 2.1 cm spiculated nodule in the right upper lobe, no mediastinal lymphadenopathy, small left pleural effusion."}
+- {category: medical, prompt: "A 7-year-old presents with fever, sore throat and a sandpaper-like rash. List the differential diagnosis."}
+- {category: medical, prompt: "Explain the clinical notes: 'Pt c/o SOB on exertion x2 weeks, bilateral pedal oedema, JVP raised, BP 150/95.'"}
+- {category: medical, prompt: "Review this medication list for interactions in an elderly patient with chronic kidney disease: metformin 1000 mg, ibuprofen 400 mg, lisinopril 10 mg."}
+- {category: medical, prompt: "What does an HbA1c of 8.1% indicate for a patient with type 2 diabetes on metformin, and how should the treatment plan change?"}

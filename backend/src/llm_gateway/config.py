@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     router_clarity_threshold: float = Field(default=0.4, ge=0, le=1)
     # Upper limit for one generation, including any model load.
     generation_timeout_seconds: float = Field(default=300.0, gt=0)
+    # Memory guard: when free system memory falls below this many MB, loaded
+    # models are unloaded before the next generation so Ollama's prompt cache
+    # is released. 0 switches the guard off.
+    min_free_memory_mb: int = Field(default=1500, ge=0)
     # Whether requests through the OpenAI-compatible endpoint think by default.
     # Off keeps other tools responsive; a request can ask for it with
     # reasoning_effort "medium" or "high".

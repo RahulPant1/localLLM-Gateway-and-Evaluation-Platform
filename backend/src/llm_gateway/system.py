@@ -24,6 +24,22 @@ class GpuStatus(BaseModel):
     error: str | None = None
 
 
+def memory_mb() -> tuple[int | None, int | None]:
+    """(available, total) system memory in MB, or (None, None) where it
+    cannot be read. "Available" is what the kernel says can be used without
+    swapping; inside WSL it refers to the WSL virtual machine."""
+    try:
+        with open("/proc/meminfo", encoding="ascii") as meminfo:
+            values = {line.split(":")[0]: int(line.split()[1]) for line in meminfo}
+        return values["MemAvailable"] // 1024, values["MemTotal"] // 1024
+    except (OSError, KeyError, ValueError, IndexError):
+        return None, None
+
+
+def memory_available_mb() -> int | None:
+    return memory_mb()[0]
+
+
 def detect_environment() -> Environment:
     if platform.system() != "Linux":
         return "other"
@@ -60,7 +76,10 @@ async def gpu_status(timeout_seconds: float = 3.0) -> GpuStatus:
     try:
         stdout, stderr = await asyncio.wait_for(process.communicate(), timeout_seconds)
     except TimeoutError:
-        process.kill()
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass  # it exited just as the time ran out
         return GpuStatus(available=False, error="nvidia-smi timed out")
     if process.returncode != 0:
         return GpuStatus(

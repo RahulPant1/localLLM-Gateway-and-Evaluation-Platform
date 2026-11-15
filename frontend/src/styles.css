@@ -267,3 +267,5 @@ progress { width: 160px; accent-color: var(--accent); }
 .panel-head.sub { margin: 16px 0 6px; }
 .overview-table td.best { font-weight: 700; }
 .best-mark { color: var(--good); font-weight: 600; font-size: 12px; white-space: nowrap; }
+
+.answer-slot { display: grid; gap: 8px; min-width: 0; align-content: start; }

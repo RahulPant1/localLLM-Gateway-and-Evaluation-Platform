@@ -14,12 +14,13 @@ from llm_gateway import __version__
 from llm_gateway.api import router as runs_router
 from llm_gateway.catalog import ModelCatalog
 from llm_gateway.config import PROJECT_ROOT, Settings, get_settings
-from llm_gateway.execution import ExecutionQueue, QueueState
+from llm_gateway.execution import ExecutionQueue, MemoryGuard, QueueState
 from llm_gateway.openai_api import router as openai_router
 from llm_gateway.providers.base import (
     GenerationFailed,
     GenerationTimeout,
     LoadedModel,
+    LowMemory,
     ModelInfo,
     ModelNotFound,
     ModelProvider,
@@ -32,7 +33,13 @@ from llm_gateway.routing.router import Router
 from llm_gateway.rubric import load_judge_instructions, load_rubric
 from llm_gateway.runner import Runner
 from llm_gateway.store import Store
-from llm_gateway.system import Environment, GpuStatus, detect_environment, gpu_status
+from llm_gateway.system import (
+    Environment,
+    GpuStatus,
+    detect_environment,
+    gpu_status,
+    memory_mb,
+)
 
 
 class HealthResponse(BaseModel):
@@ -83,6 +90,14 @@ class EvaluatorStatus(BaseModel):
     rubric_error: str | None
 
 
+class MemoryStatus(BaseModel):
+    # System memory in MB (of the WSL virtual machine when running in WSL).
+    available_mb: int | None
+    total_mb: int | None
+    # Below this, models are unloaded before the next generation. 0 = guard off.
+    guard_mb: int
+
+
 class StatusResponse(BaseModel):
     # "degraded" = the backend is up but local models cannot be run.
     status: Literal["ok", "degraded"]
@@ -90,6 +105,7 @@ class StatusResponse(BaseModel):
     environment: Environment
     provider: ProviderStatus
     gpu: GpuStatus
+    memory: MemoryStatus
     queue: QueueState
     router: RouterStatus
     evaluator: EvaluatorStatus
@@ -100,6 +116,7 @@ FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
 ERROR_STATUS: dict[type[ProviderError], int] = {
     ModelNotFound: 404,
     GenerationTimeout: 504,
+    LowMemory: 503,
     GenerationFailed: 502,
     ProviderUnavailable: 503,
 }
@@ -144,7 +161,7 @@ def create_app(provider: ModelProvider | None = None, settings: Settings | None 
         store.fail_unrouted()
         app.state.provider = active
         app.state.catalog = ModelCatalog(active)
-        app.state.queue = ExecutionQueue(active)
+        app.state.queue = ExecutionQueue(active, MemoryGuard(active, config.min_free_memory_mb))
         app.state.store = store
         app.state.settings = config
         app.state.rubric = load_rubric(config.rubric_path)
@@ -240,6 +257,11 @@ def create_app(provider: ModelProvider | None = None, settings: Settings | None 
             environment=detect_environment(),
             provider=provider_info,
             gpu=gpu,
+            memory=MemoryStatus(
+                available_mb=memory_mb()[0],
+                total_mb=memory_mb()[1],
+                guard_mb=settings.min_free_memory_mb,
+            ),
             queue=queue.state(),
             router=RouterStatus(
                 classifier_model=registry.classifier_model,

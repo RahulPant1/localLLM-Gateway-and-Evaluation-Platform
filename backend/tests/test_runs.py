@@ -97,7 +97,7 @@ def test_generation_failure_keeps_earlier_results(client, provider):
 
 
 def _failing(error):
-    async def generate(request, model):
+    async def generate(request, model, on_delta=None):
         raise error
 
     return generate
@@ -318,3 +318,133 @@ def test_evaluation_import_is_all_or_nothing(client):
     assert response.status_code == 404
     assert response.json()["detail"]["execution_ids"] == ["does-not-exist"]
     assert client.get(f"/api/batches/{batch['id']}").json()["evaluated_count"] == 0
+
+
+def test_running_execution_shows_the_text_generated_so_far(client, provider):
+    from llm_gateway.providers.base import GenerationResult
+
+    release = []
+
+    async def generate(request, model, on_delta=None):
+        import asyncio
+
+        on_delta("thinking", "let me see")
+        on_delta("content", "Par")
+        while not release:
+            await asyncio.sleep(0.01)
+        on_delta("content", "is.")
+        return GenerationResult(model=model.name, response="Paris.", num_ctx=model.num_ctx)
+
+    provider.generate = generate
+    created = submit(client)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        execution = client.get(f"/api/requests/{created['id']}").json()["executions"][0]
+        if execution["response"]:
+            break
+        time.sleep(0.01)
+    assert execution["status"] == "running"
+    assert execution["response"] == "Par" and execution["thinking"] == "let me see"
+    # The partial text is not in the database: History lists show it only once complete.
+    assert client.get("/api/requests").json()[0]["executions"][0]["response"] is None
+
+    release.append(True)
+    done = wait_request(client, created["id"])["executions"][0]
+    assert done["status"] == "completed" and done["response"] == "Paris."
+    assert done["thinking"] is None  # the final result decides, not the partial text
+
+
+def exhausted_provider(provider):
+    """Make thinking runs use the whole context on reasoning and answer nothing."""
+    from llm_gateway.providers.base import GenerationResult
+
+    async def generate(request, model, on_delta=None):
+        provider.requests.append(request)
+        if request.think is False:
+            return GenerationResult(model=model.name, response="Paris.", num_ctx=model.num_ctx)
+        return GenerationResult(
+            model=model.name,
+            response="",
+            thinking="1. The 2. capital 3. of",
+            done_reason="length",
+            num_ctx=model.num_ctx,
+            output_tokens=8167,
+            warnings=["output_cut_off", "context_window_full"],
+        )
+
+    provider.generate = generate
+
+
+def test_empty_answer_after_thinking_is_a_failure_and_can_be_retried(client, provider):
+    exhausted_provider(provider)
+    first = wait_request(client, submit(client, prompt="Capital?", system="Be brief.")["id"])
+    execution = first["executions"][0]
+    assert execution["status"] == "failed" and execution["error_code"] == "thinking_exhausted"
+    assert execution["error_detail"].startswith("Ran out of room while thinking")
+    assert "8167" in execution["error_detail"]
+    # What the model did produce is kept for inspection.
+    assert execution["thinking"] == "1. The 2. capital 3. of"
+    assert execution["metrics"]["output_tokens"] == 8167
+    assert execution["warnings"] == ["output_cut_off", "context_window_full"]
+    assert execution["execution_ms"] is not None
+
+    response = client.post(f"/api/executions/{execution['id']}/retry", json={})
+    assert response.status_code == 201
+    retry = wait_request(client, response.json()["id"])
+    # The second attempt joins the same run, after the failed one.
+    assert retry["id"] == first["id"] and retry["think"] is None
+    failed, second = retry["executions"]
+    assert failed["status"] == "failed" and failed["think"] is None
+    assert second["model"] == execution["model"] and second["think"] is False
+    assert second["status"] == "completed" and second["response"] == "Paris."
+    assert provider.requests[-1].think is False and provider.requests[-1].system == "Be brief."
+    assert len(client.get("/api/requests").json()) == 1  # no extra run in History
+
+    # A judge is given the answer that succeeded, not the failure.
+    package = client.post("/api/judge-package", json={"request_ids": [first["id"]]}).json()
+    assert package["item_count"] == 1 and "Paris." in package["text"]
+
+    assert client.post("/api/executions/nope/retry", json={}).status_code == 404
+
+
+def test_an_ordinary_empty_answer_stays_completed(client, provider):
+    from llm_gateway.providers.base import GenerationResult
+
+    async def generate(request, model, on_delta=None):
+        return GenerationResult(model=model.name, response="", num_ctx=model.num_ctx)
+
+    provider.generate = generate
+    done = wait_request(client, submit(client)["id"])
+    assert done["executions"][0]["status"] == "completed"
+
+
+def test_retrying_a_follow_up_keeps_its_place_in_the_conversation(client, provider):
+    root = wait_request(client, submit(client, think=False)["id"])["executions"][0]
+    exhausted_provider(provider)
+    follow = client.post(
+        f"/api/executions/{root['id']}/follow-ups", json={"prompt": "And Spain?", "think": True}
+    ).json()
+    failed = wait_request(client, follow["id"])["executions"][0]
+    assert failed["error_code"] == "thinking_exhausted"
+
+    retry = client.post(f"/api/executions/{failed['id']}/retry", json={}).json()
+    wait_request(client, retry["id"])
+    turns = client.get(f"/api/executions/{root['id']}/thread").json()["turns"]
+    assert [t["prompt"] for t in turns] == ["hello", "And Spain?"]
+    assert turns[-1]["execution"]["response"] == "Paris."
+    assert [m.content for m in provider.requests[-1].history] == ["hello", "echo: hello"]
+
+
+def test_retry_inside_a_batch_stays_in_the_batch_and_its_export(client, provider):
+    exhausted_provider(provider)
+    batch = wait_batch(client, make_batch(client, prompts=["alpha"], models=["small:1b"])["id"])
+    assert batch["counts"]["failed"] == 1
+    failed = batch["requests"][0]["executions"][0]
+    assert client.get(f"/api/batches/{batch['id']}/export").json()["items"] == []
+
+    client.post(f"/api/executions/{failed['id']}/retry", json={})
+    after = wait_batch(client, batch["id"])
+    assert after["request_count"] == 1
+    assert after["counts"] == {"queued": 0, "running": 0, "completed": 1, "failed": 1}
+    items = client.get(f"/api/batches/{batch['id']}/export").json()["items"]
+    assert [item["response"] for item in items] == ["Paris."]

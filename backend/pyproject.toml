@@ -1,7 +1,7 @@
 [project]
 name = "llm-gateway"
 version = "0.1.0"
-description = "Local LLM gateway: routing, execution and Claude-based evaluation"
+description = "Local LLM gateway: routing, execution and blind evaluation of local models"
 authors = [
     { name = "RahulPant1" }
 ]

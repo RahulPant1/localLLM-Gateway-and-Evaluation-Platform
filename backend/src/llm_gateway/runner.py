@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Failures where trying the fallback model makes sense. An unreachable
 # provider is not one: the fallback would fail the same way.
+THINKING_EXHAUSTED = "thinking_exhausted"
 RETRY_ON_FALLBACK = {"model_not_found", "generation_failed", "generation_timeout"}
 
 
@@ -38,6 +39,8 @@ class Runner:
         self._queue = queue
         self._router = router
         self._tasks: set[asyncio.Task] = set()
+        # Execution id -> [answer so far, thinking so far], while it is generating.
+        self._live: dict[str, list[str]] = {}
         # Request id -> queue of live events, for callers that stream an answer.
         self._listeners: dict[str, asyncio.Queue] = {}
 
@@ -48,6 +51,15 @@ class Runner:
 
     def unsubscribe(self, request_id: str) -> None:
         self._listeners.pop(request_id, None)
+
+    def apply_live(self, executions: Iterable[Execution]) -> None:
+        """Fill in the text generated so far on executions that are still
+        running, so a polling screen can show the answer as it grows."""
+        for execution in executions:
+            live = self._live.get(execution.id)
+            if live and execution.status == "running":
+                execution.response = live[0] or None
+                execution.thinking = live[1] or None
 
     def _publish(self, request_id: str, *event: object) -> None:
         listener = self._listeners.get(request_id)
@@ -175,12 +187,12 @@ class Runner:
             if request.parent_execution_id:
                 history = history_messages(self._store.ancestors(request.parent_execution_id))
             model = await self._catalog.get(execution.model)
-            on_delta = None
-            if request.id in self._listeners:
-                self._publish(request.id, "start", execution.model)
+            self._publish(request.id, "start", execution.model)
+            live = self._live[execution.id] = ["", ""]
 
-                def on_delta(kind: str, text: str) -> None:
-                    self._publish(request.id, "delta", kind, text)
+            def on_delta(kind: str, text: str) -> None:
+                live[0 if kind == "content" else 1] += text
+                self._publish(request.id, "delta", kind, text)
 
             record = await self._queue.run(
                 GenerationRequest(
@@ -188,7 +200,7 @@ class Runner:
                     prompt=compose_prompt(request),
                     system=request.system,
                     history=history,
-                    think=request.think,
+                    think=request.think if execution.think is None else execution.think,
                     max_tokens=request.max_tokens,
                     temperature=request.temperature,
                 ),
@@ -203,14 +215,38 @@ class Runner:
             logger.exception("Execution %s failed unexpectedly", execution.id)
             self._store.fail_execution(execution.id, "internal_error", f"{type(exc).__name__}")
             return False, "internal_error"
+        finally:
+            self._live.pop(execution.id, None)
         result = record.result
+        metrics = result.model_dump(exclude={"model", "response", "thinking", "warnings"})
+        metrics["memory_available_mb"] = record.memory_available_mb
+        if (
+            not result.response.strip()
+            and result.thinking
+            and (result.done_reason == "length" or "context_window_full" in result.warnings)
+        ):
+            # Reasoning used every available token, so there is no answer.
+            # Reported as a failure: "completed" with nothing to read misleads.
+            self._store.fail_execution(
+                execution.id,
+                THINKING_EXHAUSTED,
+                f"Ran out of room while thinking: the model spent all "
+                f"{result.output_tokens or 'its'} available tokens on reasoning and had none "
+                "left for the answer. Run it again with thinking off.",
+                thinking=result.thinking,
+                queue_wait_ms=record.queue_wait_ms,
+                execution_ms=record.execution_ms,
+                metrics=metrics,
+                warnings=result.warnings,
+            )
+            return False, THINKING_EXHAUSTED
         self._store.complete_execution(
             execution.id,
             response=result.response,
             thinking=result.thinking,
             queue_wait_ms=record.queue_wait_ms,
             execution_ms=record.execution_ms,
-            metrics=result.model_dump(exclude={"model", "response", "thinking", "warnings"}),
+            metrics=metrics,
             warnings=result.warnings,
         )
         return True, None

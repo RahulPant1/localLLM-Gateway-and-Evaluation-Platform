@@ -31,6 +31,7 @@ from llm_gateway.schemas import (
     PromptInput,
     RequestCreate,
     RequestRecord,
+    RetryCreate,
     RoutePreview,
     Thread,
 )
@@ -106,19 +107,23 @@ def list_requests(
 
 
 @router.get("/requests/{request_id}")
-def get_request(request_id: str, store: StoreDep) -> RequestRecord:
+def get_request(request_id: str, store: StoreDep, runner: RunnerDep) -> RequestRecord:
+    """One request. An execution that is still running carries the text
+    generated so far in `response` and `thinking`."""
     record = store.get_request(request_id)
     if record is None:
         raise HTTPException(404, "Request not found")
+    runner.apply_live(record.executions)
     return record
 
 
 @router.get("/executions/{execution_id}/thread")
-def get_thread(execution_id: str, store: StoreDep) -> Thread:
+def get_thread(execution_id: str, store: StoreDep, runner: RunnerDep) -> Thread:
     """The conversation this answer belongs to, with an estimate of context use."""
     turns = full_thread(store, execution_id)
     if not turns:
         raise HTTPException(404, "Execution not found")
+    runner.apply_live(execution for _, execution in turns)
     return build_thread(turns)
 
 
@@ -164,6 +169,42 @@ async def create_follow_up(
     return record
 
 
+@router.post("/executions/{execution_id}/retry", status_code=201)
+async def retry_execution(
+    execution_id: str, body: RetryCreate, store: StoreDep, runner: RunnerDep
+) -> RequestRecord:
+    """Run the same prompt again on the same model, by default with thinking off.
+
+    The second attempt is added to the same request, next to the first, so
+    it stays in the same run and batch: exports and evaluation pick up the
+    answer that succeeded. A follow-up message in a conversation is the
+    exception: it is retried as a new message in the same place.
+    """
+    found = store.get_execution(execution_id)
+    if found is None:
+        raise HTTPException(404, "Execution not found")
+    execution, original = found
+    if execution.status in ("queued", "running"):
+        raise HTTPException(
+            409, {"error": "still_running", "detail": "Wait for this run to finish first"}
+        )
+    if original.parent_execution_id is None:
+        store.add_execution(original.id, execution.model, think=body.think)
+        record = store.get_request(original.id)
+    else:
+        record = store.create_request(
+            PromptInput(prompt=original.prompt, source_material=original.source_material),
+            [execution.model],
+            routing_mode="manual",
+            think=body.think,
+            max_tokens=original.max_tokens,
+            parent_execution_id=original.parent_execution_id,
+            temperature=original.temperature,
+        )
+    await runner.schedule([record])
+    return record
+
+
 @router.post("/batches", status_code=201)
 async def create_batch(
     body: BatchCreate, store: StoreDep, runner: RunnerDep, catalog: CatalogDep
@@ -193,11 +234,28 @@ def list_batches(store: StoreDep) -> list[BatchSummary]:
 
 
 @router.get("/batches/{batch_id}")
-def get_batch(batch_id: str, store: StoreDep) -> BatchDetail:
+def get_batch(batch_id: str, store: StoreDep, runner: RunnerDep) -> BatchDetail:
     summary = store.get_batch(batch_id)
     if summary is None:
         raise HTTPException(404, "Batch not found")
-    return BatchDetail(**summary.model_dump(), requests=store.batch_requests(batch_id))
+    requests = store.batch_requests(batch_id)
+    for request in requests:
+        runner.apply_live(request.executions)
+    return BatchDetail(**summary.model_dump(), requests=requests)
+
+
+@router.post("/batches/{batch_id}/resume")
+async def resume_batch(batch_id: str, store: StoreDep, runner: RunnerDep) -> BatchSummary:
+    """Run again the parts of a batch that were interrupted or timed out,
+    for example after the backend was restarted. Completed answers are kept."""
+    summary = store.get_batch(batch_id)
+    if summary is None:
+        raise HTTPException(404, "Batch not found")
+    if summary.counts["queued"] or summary.counts["running"]:
+        raise HTTPException(409, {"error": "still_running", "detail": "The batch is still running"})
+    if store.requeue_resumable(batch_id):
+        await runner.schedule(store.batch_requests(batch_id), shadow_route=True)
+    return store.get_batch(batch_id)
 
 
 @router.get("/batches/{batch_id}/export")

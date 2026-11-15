@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { api, isActive, type Execution, type Thread } from "../api";
+import { api, isActive, type Execution, type Thread, ranOutWhileThinking } from "../api";
 import { STATUS_TEXT, WARNING_TEXT, seconds } from "../format";
 import { useNow, usePolling } from "../hooks";
 import { Markdown } from "./Markdown";
 
-function Answer({ execution }: { execution: Execution }) {
+function Answer({ execution, onRetry }: { execution: Execution; onRetry: () => void }) {
   const now = useNow(isActive(execution));
   const m = execution.metrics ?? {};
   const since = new Date(execution.started_at ?? execution.created_at).getTime();
@@ -16,22 +16,29 @@ function Answer({ execution }: { execution: Execution }) {
         )}
         <span className="muted small">
           {execution.status === "queued" && `waiting for the GPU, ${Math.max(0, Math.round((now - since) / 1000))} s`}
-          {execution.status === "running" && `generating, ${Math.max(0, Math.round((now - since) / 1000))} s`}
+          {execution.status === "running" &&
+            `${execution.response ? "generating" : execution.thinking ? "thinking" : "loading the model"}, ${Math.max(0, Math.round((now - since) / 1000))} s`}
           {execution.status === "completed" &&
             `${seconds(execution.execution_ms)} · ${m.output_tokens ?? "-"} tokens · ${m.tokens_per_second ?? "-"} tok/s`}
         </span>
       </div>
       {execution.status === "failed" && (
         <p className="error">
-          <strong>{execution.error_code}</strong>: {execution.error_detail}
+          <strong>{ranOutWhileThinking(execution) ? "Failed" : execution.error_code}</strong>:{" "}
+          {execution.error_detail}
         </p>
+      )}
+      {ranOutWhileThinking(execution) && (
+        <button className="secondary flat" onClick={onRetry}>
+          Run again without thinking
+        </button>
       )}
       {execution.warnings.map((w) => (
         <p key={w} className="warning">
           {WARNING_TEXT[w] ?? w}
         </p>
       ))}
-      {execution.status === "completed" && (
+      {(execution.status === "completed" || (execution.status === "running" && execution.response)) && (
         <div className="response">
           {execution.response ? <Markdown text={execution.response} /> : <span className="muted">(empty response)</span>}
         </div>
@@ -81,7 +88,7 @@ export function Chat({ executionId, onClose }: { executionId: string; onClose: (
         setError((e as Error).message);
       }
     },
-    active ? 1000 : null,
+    active ? 500 : null,
     [executionId, active, version],
   );
 
@@ -136,7 +143,16 @@ export function Chat({ executionId, onClose }: { executionId: string; onClose: (
               <pre className="response plain">{turn.source_material}</pre>
             </details>
           )}
-          <Answer execution={turn.execution} />
+          <Answer
+            execution={turn.execution}
+            onRetry={() =>
+              // The new attempt takes this message's place in the conversation.
+              api
+                .retryWithoutThinking(turn.execution.id)
+                .catch((e) => setError((e as Error).message))
+                .finally(() => setVersion((v) => v + 1))
+            }
+          />
         </div>
       ))}
 

@@ -42,6 +42,7 @@ class FakeProvider(ModelProvider):
         self.running = 0
         self.max_running = 0
         self.calls: list[str] = []
+        self.unloaded: list[str] = []
         self.requests: list[GenerationRequest] = []
         # What the fake returns when asked to classify a request (schema-constrained call).
         self.classifier_answer = '{"category": "general_qa", "complexity": "low"}'
@@ -58,6 +59,10 @@ class FakeProvider(ModelProvider):
         if self.error:
             raise self.error
         return list(self.models)
+
+    async def unload(self, model: str) -> None:
+        self.unloaded.append(model)
+        self.loaded = [m for m in self.loaded if m.name != model]
 
     async def list_loaded(self) -> list[LoadedModel]:
         if self.error:
@@ -138,6 +143,8 @@ def make_client(tmp_path, provider, request, registry_path):
     def _make(**overrides) -> TestClient:
         overrides.setdefault("database_path", tmp_path / "test.db")
         overrides.setdefault("registry_path", registry_path)
+        # The memory guard reads the real machine; tests that need it enable it.
+        overrides.setdefault("min_free_memory_mb", 0)
         settings = Settings(_env_file=None, **overrides)
         app = create_app(provider=provider, settings=settings)
         client = TestClient(app)

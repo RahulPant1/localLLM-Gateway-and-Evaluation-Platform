@@ -110,7 +110,7 @@ def test_unsure_between_categories_with_the_same_model_skips_the_classifier(clie
 def failing_for(provider, bad_model, error):
     original = provider.generate
 
-    async def generate(request, model):
+    async def generate(request, model, on_delta=None):
         if model.name == bad_model and not request.response_schema:
             raise error
         return await original(request, model)
@@ -140,7 +140,7 @@ def test_fallback_is_tried_only_once(client, provider):
 
 
 def _always_failing(error):
-    async def generate(request, model):
+    async def generate(request, model, on_delta=None):
         raise error
 
     return generate

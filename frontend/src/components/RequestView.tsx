@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import type { RequestRecord } from "../api";
+import { api, requestActive, type RequestRecord } from "../api";
+import { usePolling } from "../hooks";
 import { Chat } from "./Chat";
 import { ExecutionCard } from "./ExecutionCard";
 import { RoutingPanel } from "./RoutingPanel";
@@ -15,10 +16,55 @@ interface Props {
 export function RequestView({ request, showPrompt = true, onEvaluate }: Props) {
   const [chatId, setChatId] = useState<string | null>(null);
 
-  // Showing a different request closes any open conversation.
-  useEffect(() => setChatId(null), [request.id]);
+  // After "Run again without thinking": this request re-read from the backend,
+  // which then holds the second attempt as one more execution.
+  const [fresh, setFresh] = useState<RequestRecord | null>(null);
+  const [retryError, setRetryError] = useState<string | null>(null);
 
-  const completed = request.executions.filter((e) => e.status === "completed");
+  // Showing a different request closes any open conversation.
+  useEffect(() => {
+    setChatId(null);
+    setFresh(null);
+    setRetryError(null);
+  }, [request.id]);
+
+  const refreshing = fresh ? requestActive(fresh) : false;
+  usePolling(
+    async () => {
+      if (!fresh || !refreshing) return;
+      try {
+        setFresh(await api.request(request.id));
+      } catch (e) {
+        setRetryError((e as Error).message);
+      }
+    },
+    refreshing ? 500 : null,
+    [request.id, refreshing],
+  );
+  const retry = async (executionId: string) => {
+    try {
+      setFresh(await api.retryWithoutThinking(executionId));
+      setRetryError(null);
+    } catch (e) {
+      setRetryError((e as Error).message);
+    }
+  };
+
+  // The answers to show: the ones given, updated from the re-read copy, plus
+  // any later attempt on the same models (the caller may pass only some models).
+  const latest = new Map(fresh?.executions.map((e) => [e.id, e]));
+  const models = new Set(request.executions.map((e) => e.model));
+  const executions = [
+    ...request.executions.map((e) => latest.get(e.id) ?? e),
+    ...(fresh?.executions ?? []).filter(
+      (e) => models.has(e.model) && !request.executions.some((given) => given.id === e.id),
+    ),
+  ];
+  const attempt = (id: string, model: string) =>
+    executions.filter((e) => e.model === model).findIndex((e) => e.id === id);
+  const attempts = (model: string) => executions.filter((e) => e.model === model).length;
+
+  const completed = executions.filter((e) => e.status === "completed");
   const fullyScored = completed.length > 0 && completed.every((e) => e.evaluations.length > 0);
 
   if (chatId) return <Chat executionId={chatId} onClose={() => setChatId(null)} />;
@@ -72,9 +118,23 @@ export function RequestView({ request, showPrompt = true, onEvaluate }: Props) {
           </span>
         </div>
       )}
-      <div className={request.executions.length > 1 ? "cards compare" : "cards"}>
-        {request.executions.map((e) => (
-          <ExecutionCard key={e.id} execution={e} onContinue={() => setChatId(e.id)} />
+      {retryError && <p className="error">{retryError}</p>}
+      <div className={executions.length > 1 ? "cards compare" : "cards"}>
+        {executions.map((e) => (
+          <div className="answer-slot" key={e.id}>
+            {attempt(e.id, e.model) > 0 && (
+              <span className="label">
+                Attempt {attempt(e.id, e.model) + 1}
+                {e.think === false && ", thinking off"}
+              </span>
+            )}
+            <ExecutionCard
+              execution={e}
+              onContinue={() => setChatId(e.id)}
+              // Offered on the latest attempt only.
+              onRetry={attempt(e.id, e.model) === attempts(e.model) - 1 ? () => retry(e.id) : undefined}
+            />
+          </div>
         ))}
       </div>
     </div>

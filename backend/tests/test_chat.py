@@ -23,7 +23,7 @@ def capture(provider, prompt_tokens=None, output_tokens=None, thinking=None):
     """Make the fake provider record what it is sent and report token counts."""
     seen = []
 
-    async def generate(request, model):
+    async def generate(request, model, on_delta=None):
         seen.append(request)
         return GenerationResult(
             model=model.name,
@@ -110,7 +110,7 @@ def test_cannot_continue_an_unfinished_or_failed_answer(client, provider):
 
 
 def _failing():
-    async def generate(request, model):
+    async def generate(request, model, on_delta=None):
         raise GenerationFailed("out of memory")
 
     return generate

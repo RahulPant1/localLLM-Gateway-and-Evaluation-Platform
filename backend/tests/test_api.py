@@ -42,7 +42,12 @@ def test_status_ok(client, provider):
     assert body["provider"]["version"] == "0.0-fake"
     assert body["provider"]["loaded_models"][0]["name"] == "small:1b"
     assert body["queue"]["busy"] is False
-    assert body["evaluator"] == {"configured": False, "judge_model": "claude-opus-5-5"}
+    assert body["evaluator"] == {
+        "configured": False,
+        "judge_model": "claude-opus-5-5",
+        "rubric_version": "v1",
+        "rubric_error": None,
+    }
     assert "available" in body["gpu"]
 
 

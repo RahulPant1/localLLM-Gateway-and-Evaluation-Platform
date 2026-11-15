@@ -1,0 +1,55 @@
+# Evaluation rubric. Every judge (Claude Code, another model, a person, and
+# later the in-app Claude API judge) scores against this file.
+#
+# Change `version` whenever you change the wording or weights, so scores made
+# under different rubrics are never mixed up. The five dimension names are
+# fixed; descriptions, anchors and weights can be edited.
+
+version: v1
+scale: "0-10, whole or half numbers"
+
+dimensions:
+  - name: correctness
+    weight: 1.0
+    description: Is the response factually and logically correct? Are there false claims, calculation errors or contradictions?
+    anchors:
+      "0-2": Mostly wrong, or contains a serious error that makes the answer harmful or useless.
+      "3-5": A mix of right and wrong; at least one significant error.
+      "6-8": Correct on the main points; only minor errors or imprecision.
+      "9-10": Fully correct; nothing to fix.
+
+  - name: relevance
+    weight: 1.0
+    description: Does the response address the question that was actually asked, without drifting into unrelated material?
+    anchors:
+      "0-2": Answers a different question, or is mostly off-topic.
+      "3-5": Partly on topic, with substantial irrelevant content or a misread of the request.
+      "6-8": On topic, with a little padding or tangent.
+      "9-10": Entirely focused on what was asked.
+
+  - name: completeness
+    weight: 1.0
+    description: Does the response cover the important aspects of the request? Is anything a careful reader would expect missing?
+    anchors:
+      "0-2": Empty, cut off, or covers almost none of what was asked.
+      "3-5": Covers some parts; important parts are missing.
+      "6-8": Covers the main parts; minor gaps.
+      "9-10": Covers everything asked, at a suitable depth.
+
+  - name: instruction_adherence
+    weight: 1.0
+    description: Does the response follow the explicit instructions - requested format, length, language, constraints such as "one word" or "JSON only"?
+    anchors:
+      "0-2": Ignores the instructions.
+      "3-5": Follows some instructions and breaks others (for example, right content in the wrong format).
+      "6-8": Follows the instructions with small deviations.
+      "9-10": Follows every instruction exactly.
+
+  - name: groundedness
+    weight: 1.0
+    description: Only when source material is provided - are the claims supported by it, and does the response reflect it accurately without inventing details? Use null when there is no source material.
+    anchors:
+      "0-2": Contradicts the source or is largely invented.
+      "3-5": Several claims are not supported by the source.
+      "6-8": Faithful to the source, with a minor unsupported detail.
+      "9-10": Every claim is supported by the source.

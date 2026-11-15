@@ -1,6 +1,6 @@
 # Architecture and Agreed Decisions
 
-Status: architecture approved on 2026-11-14. Phases 0 to 3 are complete (2026-11-15). Next step is Phase 4. How to run and use the app: [USAGE.md](USAGE.md).
+Status: architecture approved on 2026-11-14. Phases 0 to 3 are complete (2026-11-15), plus judging by an external judge (Evaluate tab) and the Overview tab. The in-app Claude API judge (rest of Phase 4) is on hold until the owner has an API key. How to run and use the app: [USAGE.md](USAGE.md).
 
 This document records what was found in the environment, the architecture that was agreed, and the reasons. Requirements are in [DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md).
 
@@ -165,6 +165,32 @@ Measured accuracy (2026-11-15):
 | Held-out set | Full router, right model | 23 of 25 |
 
 On the held-out set the classifier was needed for 11 of 25 prompts. Both wrong-model cases were coding questions phrased as plain questions that went to the general model. The held-out file must stay untuned; add new prompts to `routing_prompts.yaml`.
+
+## Evaluation by Claude Code (2026-11-15)
+
+The owner may not have a Claude API key, so the first working judge is Claude Code itself, not the API.
+
+- **Rubric** in `config/rubric.yaml`: version, the five fixed dimensions with descriptions and score anchors, and weights. The overall score is the weighted mean of the scored dimensions, computed by the gateway. Each stored evaluation records the rubric version.
+- **Judge instructions** in `config/judge_prompt.md`: how to judge and the result format. Written to be reused unchanged as the system prompt of the API judge later.
+- **Export** now carries the rubric and instructions with the items, and can leave out outputs a named judge has already scored.
+- **`backend/scripts/evals.py`** (`list`, `export`, `import`, `summary`) works directly on the database, so the backend need not be running.
+- **`/evaluate-batch`** is a project command for Claude Code (`.claude/commands/evaluate-batch.md`) that runs export, judging, import and summary. The export is blind, and the command tells the judge not to look up model names until scores are stored.
+- **Per-model score summary**: `GET /api/batches/{id}/scores`, shown under the batch grid.
+
+Still to do when a key exists (original Phase 4): the API judge call with structured output, evaluation statuses (pending, failed, unavailable), cost tracking, the Evaluate buttons, and human review.
+
+Caveat: Claude Code judging is only as blind as the judge's discipline. The same session could read the database. For a stricter separation, run `/evaluate-batch` in a fresh Claude Code session that has not seen the batch results.
+
+## Evaluate and Overview tabs (2026-11-15)
+
+- **Evaluate tab** replaces the panel that sat inside a batch. `POST /api/judge-package` builds the judge text for any mix of history requests and batches; `GET /api/judge-prompt` returns the instructions. Pasted scores go through the existing `POST /api/evaluations`.
+- **Overview tab** is read-only. `GET /api/overview?days=N` returns routing, performance, per-model and per-category rows, and evaluation totals in one response, computed in `overview.py` from `store.requests_since()`. No new tables.
+- A "warm" answer is one whose model load took under 1 second (`WARM_LOAD_MS`).
+- The **router check** compares the router's pick with judge scores on prompts where the pick and at least one other model were scored. It also reports the best single model on the same prompts. This is the first piece of the Phase 6 router confidence report.
+- The cloud cost figure is an estimate from token counts and configurable prices; local output tokens include thinking tokens.
+- Charts are plain CSS bars; no chart library was added.
+- **Task type and domain** (migration 4: two nullable columns on `evaluations`). The judge classifies each prompt from fixed lists in `taxonomy.py`; the lists are appended to the judge instructions by `load_judge_instructions`. They are separate from the router's seven categories: the router guesses before the answer exists, the judge labels afterwards with a finer list. A prompt's label is the one most of its evaluations carry. Unknown labels are stored as `other`.
+- The Evaluate tab lists only items with unscored outputs; fully scored ones return through "Evaluate again".
 
 ## Known risks
 

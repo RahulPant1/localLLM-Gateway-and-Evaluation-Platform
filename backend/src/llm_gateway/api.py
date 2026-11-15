@@ -1,25 +1,33 @@
 """Endpoints for requests, batches, export and evaluations."""
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from llm_gateway.catalog import ModelCatalog
 from llm_gateway.conversation import build_thread, context_usage, full_thread
+from llm_gateway.evaluation import (
+    build_export,
+    build_items,
+    render_judge_package,
+    summarise_batch,
+)
+from llm_gateway.overview import Overview, build_overview
 from llm_gateway.routing.router import Router
 from llm_gateway.routing.types import RoutingDraft
+from llm_gateway.rubric import Rubric
 from llm_gateway.runner import Runner
 from llm_gateway.schemas import (
-    DIMENSIONS,
-    RUBRIC_VERSION,
     BatchCreate,
     BatchDetail,
     BatchExport,
     BatchSummary,
     EvaluationImport,
-    ExportItem,
     FollowUpCreate,
+    JudgePackage,
+    JudgePackageRequest,
+    ModelScores,
     PromptInput,
     RequestCreate,
     RequestRecord,
@@ -27,17 +35,9 @@ from llm_gateway.schemas import (
     Thread,
 )
 from llm_gateway.store import Store
+from llm_gateway.taxonomy import DOMAINS, TASK_TYPES, Label
 
 router = APIRouter(prefix="/api")
-
-EXPORT_INSTRUCTIONS = (
-    "Score each item on its own, against its prompt (and source material if present). "
-    "Give every dimension a score from 0 to 10. Set groundedness to null when there is no "
-    "source material. Return the results to POST /api/evaluations as "
-    '{"evaluations": [{"execution_id", "judge", "scores": {...}, "summary", "strengths", '
-    '"weaknesses", "recommendations", "critical_issues"}]}. Do not supply an overall score; '
-    "the gateway computes it."
-)
 
 
 def get_store(request: Request) -> Store:
@@ -203,60 +203,135 @@ def get_batch(batch_id: str, store: StoreDep) -> BatchDetail:
 @router.get("/batches/{batch_id}/export")
 def export_batch(
     batch_id: str,
+    request: Request,
     store: StoreDep,
     response: Response,
     blind: bool = True,
     download: bool = False,
+    exclude_judge: str | None = None,
 ) -> BatchExport:
-    """Completed outputs of a batch, shaped for an external judge.
-
-    Blind (the default) leaves out model names and orders each prompt's
-    outputs by their random id, so the judge cannot tell which model wrote
-    what. Thinking text is never included.
+    """Completed outputs of a batch for an external judge, with the rubric and
+    judge instructions. Blind by default: no model names. Thinking text is
+    never included. `exclude_judge` leaves out outputs that judge already scored.
     """
-    summary = store.get_batch(batch_id)
-    if summary is None:
+    export = build_export(
+        store,
+        batch_id,
+        rubric=request.app.state.rubric,
+        instructions=request.app.state.judge_instructions,
+        blind=blind,
+        exclude_judge=exclude_judge,
+    )
+    if export is None:
         raise HTTPException(404, "Batch not found")
-    items = []
-    for request in store.batch_requests(batch_id):
-        completed = [e for e in request.executions if e.status == "completed"]
-        if blind:
-            completed.sort(key=lambda e: e.id)
-        for execution in completed:
-            items.append(
-                ExportItem(
-                    execution_id=execution.id,
-                    prompt=request.prompt,
-                    system=request.system,
-                    source_material=request.source_material,
-                    response=execution.response or "",
-                    model=None if blind else execution.model,
-                )
-            )
     if download:
         response.headers["Content-Disposition"] = (
             f'attachment; filename="batch-{batch_id[:8]}-{"blind" if blind else "named"}.json"'
         )
-    return BatchExport(
-        batch_id=batch_id,
-        batch_name=summary.name,
-        blind=blind,
-        rubric_version=RUBRIC_VERSION,
-        dimensions=list(DIMENSIONS),
-        scale="0-10",
-        instructions=EXPORT_INSTRUCTIONS,
-        items=items,
+    return export
+
+
+@router.post("/judge-package")
+def judge_package(body: JudgePackageRequest, request: Request, store: StoreDep) -> JudgePackage:
+    """The judge instructions, rubric and chosen outputs as one text, ready to
+    paste into Claude Code or any chat. The reply goes to POST /api/evaluations.
+
+    Takes any mix of single requests (from history) and whole batches.
+    """
+    requests = []
+    missing = []
+    for request_id in dict.fromkeys(body.request_ids):
+        record = store.get_request(request_id)
+        if record is None:
+            missing.append(request_id)
+        else:
+            requests.append(record)
+    batch_names = []
+    for batch_id in dict.fromkeys(body.batch_ids):
+        summary = store.get_batch(batch_id)
+        if summary is None:
+            missing.append(batch_id)
+        else:
+            batch_names.append(summary.name)
+            requests.extend(store.batch_requests(batch_id))
+    if missing:
+        raise HTTPException(404, {"error": "not_found", "ids": missing})
+    if not requests:
+        raise HTTPException(422, "Choose at least one request or batch")
+
+    singles = len(requests) - sum(1 for r in requests if r.batch_id)
+    parts = [f'batch "{name}"' for name in batch_names]
+    if singles:
+        parts.append(f"{singles} history run{'s' if singles != 1 else ''}")
+    rubric = request.app.state.rubric
+    items = build_items(store, requests, blind=body.blind, exclude_judge=body.exclude_judge)
+    return JudgePackage(
+        text=render_judge_package(
+            request.app.state.judge_instructions, rubric, items, " and ".join(parts)
+        ),
+        item_count=len(items),
+        rubric_version=rubric.version,
+        blind=body.blind,
     )
 
 
+@router.get("/batches/{batch_id}/scores")
+def batch_scores(batch_id: str, store: StoreDep) -> list[ModelScores]:
+    """Mean evaluation scores per model and judge for a batch."""
+    if store.get_batch(batch_id) is None:
+        raise HTTPException(404, "Batch not found")
+    return summarise_batch(store, batch_id)
+
+
+@router.get("/overview")
+def overview(
+    request: Request,
+    store: StoreDep,
+    days: Annotated[int | None, Query(ge=1, le=3650)] = None,
+) -> Overview:
+    """Routing, performance and evaluation totals. `days` omitted = all time."""
+    since = datetime.now(UTC) - timedelta(days=days) if days else None
+    config = request.app.state.settings
+    pricing = None
+    if config.cloud_input_per_mtok or config.cloud_output_per_mtok:
+        pricing = (
+            config.cloud_compare_model,
+            config.cloud_input_per_mtok,
+            config.cloud_output_per_mtok,
+        )
+    return build_overview(store.requests_since(since), days=days, since=since, pricing=pricing)
+
+
+@router.get("/rubric")
+def get_rubric(request: Request) -> Rubric:
+    return request.app.state.rubric
+
+
+@router.get("/task-types")
+def task_types() -> dict[str, list[Label]]:
+    """The fixed task types and domains a judge chooses from."""
+    return {"task_types": TASK_TYPES, "domains": DOMAINS}
+
+
+@router.get("/judge-prompt")
+def get_judge_prompt(request: Request) -> dict[str, str]:
+    """The instructions every judge is given (config/judge_prompt.md)."""
+    return {"instructions": request.app.state.judge_instructions}
+
+
 @router.post("/evaluations", status_code=201)
-def import_evaluations(body: EvaluationImport, store: StoreDep) -> dict:
+def import_evaluations(body: EvaluationImport, request: Request, store: StoreDep) -> dict:
     """Store evaluation results produced by any judge (a model, Claude Code, a person).
 
-    The overall score is computed here from the dimension scores. Existing
-    evaluations are never overwritten; each import adds new records.
+    The overall score is computed here from the dimension scores and the
+    rubric weights. Existing evaluations are never overwritten; each import
+    adds new records.
     """
     missing = store.missing_executions([e.execution_id for e in body.evaluations])
     if missing:
         raise HTTPException(404, {"error": "unknown_executions", "execution_ids": missing})
-    return {"stored": len(store.add_evaluations(body.evaluations))}
+    rubric = request.app.state.rubric
+    stored = store.add_evaluations(
+        body.evaluations, weights=rubric.weights, rubric_version=rubric.version
+    )
+    return {"stored": len(stored)}

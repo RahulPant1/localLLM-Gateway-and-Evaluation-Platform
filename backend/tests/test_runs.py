@@ -232,7 +232,8 @@ def test_blind_export_hides_model_and_thinking(client):
     assert len(export["items"]) == 3  # failed executions are left out
     assert all(item["model"] is None for item in export["items"])
     assert "thinking" not in export["items"][0]
-    assert export["dimensions"][0] == "correctness"
+    assert export["rubric"]["dimensions"][0]["name"] == "correctness"
+    assert "independent evaluator" in export["instructions"]
 
     named = client.get(f"/api/batches/{batch['id']}/export", params={"blind": False}).json()
     assert {item["model"] for item in named["items"]} == {"small:1b"}

@@ -69,7 +69,9 @@ async def main() -> None:
     print(f"  right model:    {model_ok}/{total}")
     print(f"  decided by:     {dict(decided)}")
     if llm_ms:
-        print(f"  classifier calls: {len(llm_ms)}, median {sorted(llm_ms)[len(llm_ms) // 2]:.0f} ms")
+        print(
+            f"  classifier calls: {len(llm_ms)}, median {sorted(llm_ms)[len(llm_ms) // 2]:.0f} ms"
+        )
 
 
 if __name__ == "__main__":

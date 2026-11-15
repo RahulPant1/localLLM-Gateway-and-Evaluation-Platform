@@ -43,6 +43,9 @@ export interface Evaluation {
   judge: string;
   rubric_version: string;
   scores: Record<string, number | null>;
+  // The judge's classification of the prompt; null on older evaluations.
+  task_type: string | null;
+  domain: string | null;
   overall_score: number | null;
   summary: string;
   strengths: string[];
@@ -123,6 +126,126 @@ export interface BatchDetail extends BatchSummary {
   requests: RequestRecord[];
 }
 
+export interface JudgePackage {
+  text: string;
+  item_count: number;
+  rubric_version: string;
+  blind: boolean;
+}
+
+export interface Rubric {
+  version: string;
+  scale: string;
+  dimensions: { name: string; weight: number; description: string; anchors: Record<string, string> }[];
+  error: string | null;
+}
+
+export interface ModelScores {
+  model: string;
+  judge: string;
+  evaluated: number;
+  overall: number | null;
+  dimensions: Record<string, number | null>;
+  critical_issues: number;
+}
+
+export interface Share {
+  key: string;
+  count: number;
+  share: number;
+}
+
+export interface GroupRow {
+  key: string;
+  executions: number;
+  completed: number;
+  failed: number;
+  median_ms: number | null;
+  slowest_ms: number | null;
+  output_tokens: number;
+  tokens_per_second: number | null;
+  warm_rate: number | null;
+}
+
+export interface TaxonomyLabel {
+  name: string;
+  label: string;
+  description: string;
+}
+
+export interface Taxonomy {
+  task_types: TaxonomyLabel[];
+  domains: TaxonomyLabel[];
+}
+
+/** Scores for one task type or domain, per model. */
+export interface TaskRow {
+  key: string;
+  label: string;
+  prompts: number;
+  models: Record<string, { mean: number; answers: number }>;
+  best_model: string | null;
+}
+
+/** Totals for the Overview tab (backend/src/llm_gateway/overview.py). */
+export interface Overview {
+  days: number | null;
+  requests: number;
+  routing: {
+    live: number;
+    shadow: number;
+    by_model: Share[];
+    by_category: Share[];
+    decided_by: Record<string, number>;
+    fallback_used: number;
+    escalations: number;
+    mean_confidence: number | null;
+  };
+  performance: {
+    executions: number;
+    completed: number;
+    failed: number;
+    prompt_tokens: number;
+    output_tokens: number;
+    generation_seconds: number;
+    load_seconds: number;
+    tokens_per_second: number | null;
+    warm_rate: number | null;
+    mean_swap_ms: number | null;
+    mean_queue_wait_ms: number | null;
+    cloud_estimate: {
+      model: string;
+      input_per_mtok: number;
+      output_per_mtok: number;
+      usd: number;
+    } | null;
+  };
+  by_model: GroupRow[];
+  by_category: GroupRow[];
+  evaluation: {
+    scored: number;
+    unscored: number;
+    judges: string[];
+    by_model: {
+      model: string;
+      evaluated: number;
+      overall: number | null;
+      dimensions: Record<string, number | null>;
+      critical_issues: number;
+    }[];
+    models: string[];
+    by_task: TaskRow[];
+    by_domain: TaskRow[];
+    router_check: {
+      prompts: number;
+      picked_top: number;
+      router_mean: number | null;
+      best_fixed_model: string | null;
+      best_fixed_mean: number | null;
+    };
+  };
+}
+
 export interface SystemStatus {
   status: "ok" | "degraded";
   version: string;
@@ -198,6 +321,19 @@ export const api = {
     call<RequestRecord>(`/api/executions/${executionId}/follow-ups`, { prompt }),
   batches: () => call<BatchSummary[]>("/api/batches"),
   batch: (id: string) => call<BatchDetail>(`/api/batches/${id}`),
+  judgePackage: (body: {
+    request_ids: string[];
+    batch_ids: string[];
+    blind: boolean;
+    exclude_judge: string | null;
+  }) => call<JudgePackage>("/api/judge-package", body),
+  rubric: () => call<Rubric>("/api/rubric"),
+  judgePrompt: () => call<{ instructions: string }>("/api/judge-prompt"),
+  importEvaluations: (body: unknown) => call<{ stored: number }>("/api/evaluations", body),
+  taskTypes: () => call<Taxonomy>("/api/task-types"),
+  overview: (days: number | null) =>
+    call<Overview>(days ? `/api/overview?days=${days}` : "/api/overview"),
+  batchScores: (id: string) => call<ModelScores[]>(`/api/batches/${id}/scores`),
   exportUrl: (id: string, blind: boolean) =>
     `/api/batches/${id}/export?blind=${blind}&download=true`,
 };

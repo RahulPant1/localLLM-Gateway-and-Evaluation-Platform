@@ -28,6 +28,7 @@ from llm_gateway.providers.base import (
 from llm_gateway.providers.ollama import OllamaProvider
 from llm_gateway.routing.registry import load_registry
 from llm_gateway.routing.router import Router
+from llm_gateway.rubric import load_judge_instructions, load_rubric
 from llm_gateway.runner import Runner
 from llm_gateway.store import Store
 from llm_gateway.system import Environment, GpuStatus, detect_environment, gpu_status
@@ -74,8 +75,11 @@ class RouterStatus(BaseModel):
 
 
 class EvaluatorStatus(BaseModel):
+    # Whether a Claude API key is set for the in-app judge (not built yet).
     configured: bool
     judge_model: str
+    rubric_version: str
+    rubric_error: str | None
 
 
 class StatusResponse(BaseModel):
@@ -141,6 +145,9 @@ def create_app(provider: ModelProvider | None = None, settings: Settings | None 
         app.state.catalog = ModelCatalog(active)
         app.state.queue = ExecutionQueue(active)
         app.state.store = store
+        app.state.settings = config
+        app.state.rubric = load_rubric(config.rubric_path)
+        app.state.judge_instructions = load_judge_instructions(config.judge_prompt_path)
         app.state.router = Router(
             load_registry(config.registry_path),
             active,
@@ -238,7 +245,10 @@ def create_app(provider: ModelProvider | None = None, settings: Settings | None 
                 registry_error=registry.error,
             ),
             evaluator=EvaluatorStatus(
-                configured=settings.evaluator_configured, judge_model=settings.judge_model
+                configured=settings.evaluator_configured,
+                judge_model=settings.judge_model,
+                rubric_version=request.app.state.rubric.version,
+                rubric_error=request.app.state.rubric.error,
             ),
         )
 

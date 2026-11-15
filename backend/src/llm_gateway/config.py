@@ -31,12 +31,20 @@ class Settings(BaseSettings):
     default_num_ctx: int = Field(default=8192, gt=0)
     # Model registry and routing policy.
     registry_path: Path = Path("config/models.yaml")
+    # Evaluation rubric and the instructions given to every judge.
+    rubric_path: Path = Path("config/rubric.yaml")
+    judge_prompt_path: Path = Path("config/judge_prompt.md")
     # "auto": ask the classifier model when the quick rules are unsure. "off": rules only.
     router_llm: Literal["auto", "off"] = "auto"
     # Below this clarity (0-1) the quick rules count as unsure.
     router_clarity_threshold: float = Field(default=0.4, ge=0, le=1)
     # Upper limit for one generation, including any model load.
     generation_timeout_seconds: float = Field(default=300.0, gt=0)
+    # Cloud model the Overview screen prices the local token counts against
+    # (US dollars per million tokens). Set both prices to 0 to hide the estimate.
+    cloud_compare_model: str = "claude-opus-5-5"
+    cloud_input_per_mtok: float = Field(default=4.0, ge=0)
+    cloud_output_per_mtok: float = Field(default=20.0, ge=0)
     # SecretStr keeps the key out of repr(), logs and JSON dumps by default.
     anthropic_api_key: SecretStr | None = None
 
@@ -48,7 +56,7 @@ class Settings(BaseSettings):
             return None
         return value
 
-    @field_validator("database_path", "registry_path")
+    @field_validator("database_path", "registry_path", "rubric_path", "judge_prompt_path")
     @classmethod
     def _resolve_database_path(cls, value: Path) -> Path:
         return value if value.is_absolute() else PROJECT_ROOT / value

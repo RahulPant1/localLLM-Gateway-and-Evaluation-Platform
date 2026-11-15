@@ -3,21 +3,21 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from llm_gateway.providers.base import ChatMessage
 from llm_gateway.routing.types import RoutingDecision
+from llm_gateway.rubric import Rubric
+from llm_gateway.taxonomy import DOMAIN_LABELS, TASK_TYPE_LABELS, normalise
 
 ExecutionStatus = Literal["queued", "running", "completed", "failed"]
 RoutingMode = Literal["manual", "automatic"]
 
-# Dimensions scored 0-10. Groundedness may be null: "not applicable" when the
-# request had no source material.
-DIMENSIONS = ("correctness", "relevance", "completeness", "instruction_adherence", "groundedness")
-DIMENSION_WEIGHTS = dict.fromkeys(DIMENSIONS, 1.0)
-RUBRIC_VERSION = "v1"
-
 
 class DimensionScores(BaseModel):
+    """Scores from 0 to 10. Groundedness is null ("not applicable") when the
+    request had no source material."""
+
     correctness: float = Field(ge=0, le=10)
     relevance: float = Field(ge=0, le=10)
     completeness: float = Field(ge=0, le=10)
@@ -25,25 +25,44 @@ class DimensionScores(BaseModel):
     groundedness: float | None = Field(default=None, ge=0, le=10)
 
 
-def overall_score(scores: DimensionScores) -> float:
-    """Weighted mean of the dimensions that were scored. Computed by the app,
-    never taken from the judge, so it is reproducible."""
+def overall_score(scores: DimensionScores, weights: dict[str, float]) -> float | None:
+    """Weighted mean of the dimensions that were scored, using the rubric's weights.
+
+    Computed by the app, never taken from the judge, so it is reproducible.
+    """
     scored = {k: v for k, v in scores.model_dump().items() if v is not None}
-    total_weight = sum(DIMENSION_WEIGHTS[k] for k in scored)
-    return round(sum(v * DIMENSION_WEIGHTS[k] for k, v in scored.items()) / total_weight, 2)
+    total_weight = sum(weights.get(k, 1.0) for k in scored)
+    if total_weight <= 0:
+        return None
+    return round(sum(v * weights.get(k, 1.0) for k, v in scored.items()) / total_weight, 2)
 
 
 class EvaluationInput(BaseModel):
     execution_id: str
     # Who judged: a model id, "claude-code", "human", ...
     judge: str = Field(min_length=1)
-    rubric_version: str = RUBRIC_VERSION
+    # Omitted = the rubric version currently in config/rubric.yaml.
+    rubric_version: str | None = None
     scores: DimensionScores
+    # What kind of task the prompt is, from the fixed lists in taxonomy.py.
+    # Null on evaluations stored before these fields existed.
+    task_type: str | None = None
+    domain: str | None = None
     summary: str = ""
     strengths: list[str] = []
     weaknesses: list[str] = []
     recommendations: list[str] = []
     critical_issues: list[str] = []
+
+    @field_validator("task_type", mode="before")
+    @classmethod
+    def _known_task_type(cls, value: object) -> str | None:
+        return normalise(value, TASK_TYPE_LABELS)
+
+    @field_validator("domain", mode="before")
+    @classmethod
+    def _known_domain(cls, value: object) -> str | None:
+        return normalise(value, DOMAIN_LABELS)
 
 
 class EvaluationImport(BaseModel):
@@ -178,6 +197,8 @@ class ExportItem(BaseModel):
     prompt: str
     system: str | None
     source_material: str | None
+    # Earlier turns, when the response is a follow-up in a conversation.
+    history: list[ChatMessage] = []
     response: str
     # Present only when the export is not blind.
     model: str | None = None
@@ -187,8 +208,38 @@ class BatchExport(BaseModel):
     batch_id: str
     batch_name: str
     blind: bool
-    rubric_version: str
-    dimensions: list[str]
-    scale: str
+    rubric: Rubric
+    # How to judge and what to return (config/judge_prompt.md).
     instructions: str
     items: list[ExportItem]
+
+
+class JudgePackageRequest(BaseModel):
+    """What to hand to a judge: any mix of single requests and whole batches."""
+
+    request_ids: list[str] = []
+    batch_ids: list[str] = []
+    # Hide model names from the judge.
+    blind: bool = True
+    # Leave out outputs this judge has already scored.
+    exclude_judge: str | None = None
+
+
+class JudgePackage(BaseModel):
+    """Everything a judge needs, as one text to copy."""
+
+    text: str
+    item_count: int
+    rubric_version: str
+    blind: bool
+
+
+class ModelScores(BaseModel):
+    """Mean scores one judge gave one model across a batch."""
+
+    model: str
+    judge: str
+    evaluated: int
+    overall: float | None
+    dimensions: dict[str, float | None]
+    critical_issues: int

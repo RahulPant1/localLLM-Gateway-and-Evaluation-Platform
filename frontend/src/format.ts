@@ -44,6 +44,7 @@ export const CATEGORY_TEXT: Record<string, string> = {
   reasoning: "Reasoning and analysis",
   coding: "Coding",
   medical: "Medical documents",
+  not_routed: "Not routed (manual)",
 };
 
 export const DECIDED_BY_TEXT: Record<string, string> = {
@@ -58,4 +59,34 @@ export const STATUS_TEXT: Record<string, string> = {
   running: "Running",
   completed: "Completed",
   failed: "Failed",
+};
+
+/** 4200 -> "4.2k", 1250000 -> "1.3M". */
+export function compact(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1e6) return `${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k`;
+  return `${(n / 1e6).toFixed(1)}M`;
+}
+
+export const percent = (fraction: number | null | undefined) =>
+  fraction == null ? "-" : `${Math.round(fraction * 100)}%`;
+
+/** 200 -> "3 min 20 s". */
+export function duration(totalSeconds: number): string {
+  if (totalSeconds < 60) return `${totalSeconds.toFixed(totalSeconds < 10 ? 1 : 0)} s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  if (minutes < 60) return `${minutes} min ${Math.round(totalSeconds % 60)} s`;
+  return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}
+
+/** "science_technology" -> "Science technology"; for names the app has no label for. */
+export const pretty = (name: string) =>
+  name.charAt(0).toUpperCase() + name.slice(1).replace(/_/g, " ");
+
+export const DIMENSION_TEXT: Record<string, string> = {
+  correctness: "Correct",
+  relevance: "Relevant",
+  completeness: "Complete",
+  instruction_adherence: "Follows instructions",
+  groundedness: "Grounded",
 };

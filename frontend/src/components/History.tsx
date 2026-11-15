@@ -4,7 +4,7 @@ import { snippet, when } from "../format";
 import { usePolling } from "../hooks";
 import { RequestView } from "./RequestView";
 
-export function History() {
+export function History({ onEvaluate }: { onEvaluate: (key: string) => void }) {
   const [requests, setRequests] = useState<RequestRecord[] | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +44,7 @@ export function History() {
                     {requestActive(r) && " · in progress"}
                     {failed > 0 && ` · ${failed} failed`}
                     {r.executions.some((e) => e.follow_up_count > 0) && " · conversation"}
+                    {r.executions.some((e) => e.evaluations.length > 0) && " · scored"}
                   </span>
                 </button>
               </li>
@@ -53,7 +54,7 @@ export function History() {
       </section>
       <section className="panel grow">
         <h2>Details</h2>
-        {open ? <RequestView request={open} /> : <p className="muted">Select a request to see its results.</p>}
+        {open ? <RequestView request={open} onEvaluate={onEvaluate} /> : <p className="muted">Select a request to see its results.</p>}
       </section>
     </div>
   );

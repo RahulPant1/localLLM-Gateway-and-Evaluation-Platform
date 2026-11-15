@@ -7,9 +7,10 @@ import { RequestView } from "./RequestView";
 interface Props {
   models: ModelEntry[] | null;
   modelsError: string | null;
+  onEvaluate: (key: string) => void;
 }
 
-export function Workspace({ models, modelsError }: Props) {
+export function Workspace({ models, modelsError, onEvaluate }: Props) {
   const [prompt, setPrompt] = useState("");
   const [system, setSystem] = useState("");
   const [source, setSource] = useState("");
@@ -115,7 +116,7 @@ export function Workspace({ models, modelsError }: Props) {
       <section className="panel grow">
         <h2>Response</h2>
         {current ? (
-          <RequestView request={current} showPrompt={false} />
+          <RequestView request={current} showPrompt={false} onEvaluate={onEvaluate} />
         ) : (
           <p className="muted">Results appear here. They are saved, so a page refresh loses nothing; find them under History.</p>
         )}

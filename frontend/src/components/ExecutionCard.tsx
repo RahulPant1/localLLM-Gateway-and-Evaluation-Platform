@@ -1,5 +1,5 @@
 import type { Execution } from "../api";
-import { STATUS_TEXT, WARNING_TEXT, seconds } from "../format";
+import { STATUS_TEXT, WARNING_TEXT, seconds, pretty } from "../format";
 import { useNow } from "../hooks";
 import { Markdown } from "./Markdown";
 
@@ -89,6 +89,12 @@ export function ExecutionCard({ execution, onContinue }: Props) {
               </span>
             ))}
           </div>
+          {(v.task_type || v.domain) && (
+            <p className="muted small">
+              Task type: {v.task_type ? pretty(v.task_type) : "-"} · Domain:{" "}
+              {v.domain ? pretty(v.domain) : "-"}
+            </p>
+          )}
           {v.summary && <p>{v.summary}</p>}
           {(
             [

@@ -1,0 +1,75 @@
+What causes the seasons on Earth? Answer in three sentences.
+---
+What is the difference between RAM and disk storage? Keep it under 80 words.
+---
+Why is the sky blue at noon but red at sunset? Explain briefly for a twelve-year-old.
+---
+What does an API gateway do? Give a short answer with one everyday example.
+---
+Classify the sentiment of each review as positive, negative or mixed. Give one word per review.
+1. "Battery lasts two days, love it."
+2. "Great screen but it crashes every hour."
+3. "Arrived broken and support never replied."
+---
+Label each support ticket as billing, technical or account. One label per ticket.
+1. "I was charged twice this month."
+2. "The app freezes when I upload a photo."
+3. "How do I change the email on my profile?"
+4. "My invoice shows the wrong tax rate."
+---
+Is this message spam or not spam? Answer with one label and one short reason.
+"Congratulations! You have been selected for a free cruise. Click here within 24 hours to claim your prize."
+---
+Classify each animal as mammal, bird, reptile or fish: dolphin, penguin, crocodile, salmon, bat, ostrich.
+---
+Extract every date and amount of money from this text, as a list.
+"The contract was signed on 3 March 2024 for 12,500 euros. A second payment of 4,000 euros is due on 15 June 2024, and the final 1,250 euros by 1 September 2024."
+---
+Extract the person names, company names and cities from this text.
+"Maria Oliveira of Northwind Logistics met Kenji Sato from Harbor Robotics in Rotterdam last week. They plan to open a joint office in Osaka, led by Priya Nair."
+---
+From this email, extract the meeting day, time, place and who must attend.
+"Hi all, the budget review moves to Thursday at 14:30 in room 4B. Finance leads and the two project managers must attend; everyone else is optional. Bring last quarter's numbers."
+---
+List the action items in these notes, each with its owner.
+"Sam will send the revised quote by Friday. Lena to check whether the server licence expires in May. Nobody has booked the venue yet; Omar agreed to do it. Sam also needs to update the risk list."
+---
+Return a JSON object with the keys name, age and skills (an array) for this person. Output only the JSON.
+"Dana Whitfield is 34 and works with Python, SQL and Docker."
+---
+Convert this list into a JSON array of objects with the keys item, quantity and unit_price. Output only the JSON.
+3 notebooks at 2.50 each, 10 pens at 0.80 each, 1 backpack at 24.00
+---
+Write a markdown table with the columns Planet, Moons and Type for Earth, Mars, Jupiter and Venus. Output only the table.
+---
+Produce a YAML document describing a web server with these settings: host example.internal, port 8443, TLS enabled, two worker processes, log level warning. Output only the YAML.
+---
+A train leaves at 09:10 and travels 180 km at 90 km/h. A second train leaves the same station at 09:40 on the same track at 120 km/h. At what time does the second train catch the first? Show the steps.
+---
+A shop sells a jacket at 20% off, then takes a further 10% off the reduced price. A customer says that is 30% off. Is the customer right? Explain and give the true discount.
+---
+Three friends, Ana, Ben and Chloe, each own one pet: a cat, a dog or a parrot. Ana is allergic to fur. Ben does not own the dog. Who owns which pet? Explain your reasoning.
+---
+A team can use a cheap server that fails about once a month and takes an hour to restore, or a server costing three times as much that fails about once a year. Each hour of downtime costs about as much as one month of the cheap server. Which is the better choice over a year? Reason it through.
+---
+Write a Python function that returns the n-th Fibonacci number without recursion. Include a short docstring.
+---
+This Python code raises "TypeError: can only concatenate str (not "int") to str". Explain why and fix it.
+count = 5
+print("Items: " + count)
+---
+Write a SQL query that returns the five customers with the highest total order value, from the tables customers(id, name) and orders(id, customer_id, amount).
+---
+Explain what this JavaScript line does and rewrite it to be easier to read:
+const r = a.filter(x => x % 2 === 0).map(x => x * x).reduce((s, x) => s + x, 0);
+---
+Summarise this fictional discharge note for the patient in plain language, in about four sentences.
+"67-year-old male admitted with community-acquired pneumonia. Treated with IV antibiotics for 3 days, then switched to oral. Afebrile for 48 hours, oxygen saturation 96% on room air. Discharged on a 5-day oral antibiotic course. Follow-up chest X-ray in 6 weeks. Advised to return if breathless or feverish."
+---
+From this fictional lab report, list the values that are outside the reference range and say whether each is high or low.
+"Haemoglobin 10.2 g/dL (ref 13.0-17.0). White cell count 7.1 x10^9/L (ref 4.0-11.0). Platelets 480 x10^9/L (ref 150-400). Sodium 139 mmol/L (ref 135-145). Potassium 5.9 mmol/L (ref 3.5-5.1)."
+---
+Explain the medical abbreviations in this fictional note: "Pt c/o SOB on exertion. PMH: HTN, T2DM. O/E: BP 150/95, HR 88. Plan: ECG, CXR, review in 1/52."
+---
+This fictional medication list is from a clinic letter. Rewrite it as a simple daily schedule (morning, midday, evening, bedtime).
+"Metformin 500 mg twice daily with meals. Amlodipine 5 mg once daily in the morning. Atorvastatin 20 mg once daily at night. Paracetamol 1 g up to four times daily as needed."

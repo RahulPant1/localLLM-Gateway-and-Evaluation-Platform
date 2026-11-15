@@ -110,6 +110,11 @@ MIGRATIONS = [
         created_at TEXT NOT NULL
     );
     """,
+    # 4: the judge's classification of the prompt.
+    """
+    ALTER TABLE evaluations ADD COLUMN task_type TEXT;
+    ALTER TABLE evaluations ADD COLUMN domain TEXT;
+    """,
 ]
 
 
@@ -453,6 +458,12 @@ class Store:
             where += " AND batch_id IS NULL"
         return self._requests(where, (limit, offset), "created_at DESC, position LIMIT ? OFFSET ?")
 
+    def requests_since(self, since: datetime | None = None) -> list[RequestRecord]:
+        """Every request (single, batch and follow-up) created at or after `since`."""
+        if since is None:
+            return self._requests("1 = 1", (), "created_at")
+        return self._requests("created_at >= ?", (since.isoformat(),), "created_at")
+
     def batch_requests(self, batch_id: str) -> list[RequestRecord]:
         return self._requests("batch_id = ?", (batch_id,), "position")
 
@@ -543,8 +554,14 @@ class Store:
         }
         return [i for i in execution_ids if i not in known]
 
-    def add_evaluations(self, items: list[EvaluationInput]) -> list[str]:
-        """Store evaluations from any judge. All are stored, or none."""
+    def add_evaluations(
+        self, items: list[EvaluationInput], *, weights: dict[str, float], rubric_version: str
+    ) -> list[str]:
+        """Store evaluations from any judge. All are stored, or none.
+
+        `weights` and `rubric_version` come from the current rubric; the
+        version applies to items that do not state their own.
+        """
         ids = []
         with self._transaction():
             for item in items:
@@ -553,20 +570,23 @@ class Store:
                 self._db.execute(
                     "INSERT INTO evaluations (id, execution_id, judge, rubric_version, status,"
                     " scores, overall_score, summary, strengths, weaknesses, recommendations,"
-                    " critical_issues, created_at) VALUES (?,?,?,?,'completed',?,?,?,?,?,?,?,?)",
+                    " critical_issues, created_at, task_type, domain)"
+                    " VALUES (?,?,?,?,'completed',?,?,?,?,?,?,?,?,?,?)",
                     (
                         evaluation_id,
                         item.execution_id,
                         item.judge,
-                        item.rubric_version,
+                        item.rubric_version or rubric_version,
                         item.scores.model_dump_json(),
-                        overall_score(item.scores),
+                        overall_score(item.scores, weights),
                         item.summary,
                         json.dumps(item.strengths),
                         json.dumps(item.weaknesses),
                         json.dumps(item.recommendations),
                         json.dumps(item.critical_issues),
                         _now(),
+                        item.task_type,
+                        item.domain,
                     ),
                 )
         return ids

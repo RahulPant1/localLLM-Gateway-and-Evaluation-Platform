@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type BatchDetail, type BatchSummary, type Execution, type ModelEntry } from "../api";
+import {
+  api,
+  type BatchDetail,
+  type BatchSummary,
+  type Execution,
+  type ModelEntry,
+  type ModelScores,
+} from "../api";
 import { meanScore, seconds, snippet, when } from "../format";
 import { usePolling } from "../hooks";
 import { ModelPicker } from "./ModelPicker";
@@ -42,9 +49,11 @@ function Cell({ execution, selected, routed, onClick }: CellProps) {
 interface Props {
   models: ModelEntry[] | null;
   modelsError: string | null;
+  /** Open the Evaluate tab with this item ticked. */
+  onEvaluate: (key: string) => void;
 }
 
-export function Batches({ models, modelsError }: Props) {
+export function Batches({ models, modelsError, onEvaluate }: Props) {
   const [name, setName] = useState("");
   const [text, setText] = useState("");
   const [selected, setSelected] = useState<string[] | null>(null);
@@ -52,6 +61,7 @@ export function Batches({ models, modelsError }: Props) {
   const [batches, setBatches] = useState<BatchSummary[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<BatchDetail | null>(null);
+  const [scores, setScores] = useState<ModelScores[]>([]);
   const [cell, setCell] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,7 +80,9 @@ export function Batches({ models, modelsError }: Props) {
     async () => {
       if (!openId) return setDetail(null);
       try {
-        setDetail(await api.batch(openId));
+        const loaded = await api.batch(openId);
+        setDetail(loaded);
+        setScores(loaded.evaluated_count > 0 ? await api.batchScores(openId) : []);
       } catch (e) {
         setError((e as Error).message);
       }
@@ -168,6 +180,11 @@ export function Batches({ models, modelsError }: Props) {
                 {done} of {total} runs finished
                 {detail.counts.failed > 0 && `, ${detail.counts.failed} failed`} · {detail.evaluated_count} evaluated
               </span>
+              <button className="secondary flat" disabled={detail.counts.completed === 0} onClick={() => onEvaluate(`b:${detail.id}`)}>
+                {detail.counts.completed > 0 && detail.evaluated_count >= detail.counts.completed
+                  ? "Evaluate again"
+                  : "Evaluate this batch"}
+              </button>
               <a className="button" href={api.exportUrl(detail.id, true)}>
                 Export for evaluation (blind)
               </a>
@@ -214,6 +231,51 @@ export function Batches({ models, modelsError }: Props) {
               Cells show run time, and the mean evaluation score once evaluated. A dot (●) marks the model the
               router would have picked for that prompt. Click a cell to read the output.
             </p>
+            {scores.length > 0 ? (
+              <>
+                <h3>Mean evaluation scores (0 to 10)</h3>
+                <div className="table-wrap">
+                  <table className="matrix">
+                    <thead>
+                      <tr>
+                        <th>Model</th>
+                        <th>Judge</th>
+                        <th>Scored</th>
+                        <th>Overall</th>
+                        <th>Correctness</th>
+                        <th>Relevance</th>
+                        <th>Completeness</th>
+                        <th>Instructions</th>
+                        <th>Groundedness</th>
+                        <th>Critical issues</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...scores]
+                        .sort((a, b) => (b.overall ?? 0) - (a.overall ?? 0))
+                        .map((s) => (
+                          <tr key={`${s.model}|${s.judge}`}>
+                            <th>{s.model}</th>
+                            <td>{s.judge}</td>
+                            <td>{s.evaluated}</td>
+                            <td>
+                              <span className="score">{s.overall?.toFixed(2) ?? "-"}</span>
+                            </td>
+                            {["correctness", "relevance", "completeness", "instruction_adherence", "groundedness"].map(
+                              (d) => (
+                                <td key={d}>{s.dimensions[d]?.toFixed(2) ?? "n/a"}</td>
+                              ),
+                            )}
+                            <td>{s.critical_issues || ""}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
+              done > 0 && <p className="muted small">Not evaluated yet.</p>
+            )}
             {picked && (
               <RequestView
                 key={cell}

@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from llm_gateway.routing.types import RoutingDecision
+
 ExecutionStatus = Literal["queued", "running", "completed", "failed"]
 RoutingMode = Literal["manual", "automatic"]
 
@@ -91,6 +93,9 @@ class RequestRecord(BaseModel):
     max_tokens: int | None = None
     created_at: datetime
     executions: list[Execution] = []
+    # The router's decision. Null for manual requests, and for automatic ones
+    # until routing finishes. On batch prompts it is a "shadow" decision.
+    routing: RoutingDecision | None = None
 
 
 class PromptInput(BaseModel):
@@ -100,10 +105,15 @@ class PromptInput(BaseModel):
 
 
 class RequestCreate(PromptInput):
-    # One model = manual run; several = comparison on the same prompt.
-    models: list[str] = Field(min_length=1)
+    # Omitted = automatic routing. One model = manual run; several = comparison.
+    models: list[str] | None = Field(default=None, min_length=1)
     think: bool | None = None
     max_tokens: int | None = Field(default=None, gt=0)
+
+
+class RoutePreview(PromptInput):
+    # Also ask the classifier model if the quick rules are unsure (slower).
+    use_llm: bool = False
 
 
 class FollowUpCreate(BaseModel):

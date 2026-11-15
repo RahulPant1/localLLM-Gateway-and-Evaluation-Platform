@@ -7,6 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from llm_gateway.catalog import ModelCatalog
 from llm_gateway.conversation import build_thread, context_usage, full_thread
+from llm_gateway.routing.router import Router
+from llm_gateway.routing.types import RoutingDraft
 from llm_gateway.runner import Runner
 from llm_gateway.schemas import (
     DIMENSIONS,
@@ -21,6 +23,7 @@ from llm_gateway.schemas import (
     PromptInput,
     RequestCreate,
     RequestRecord,
+    RoutePreview,
     Thread,
 )
 from llm_gateway.store import Store
@@ -49,7 +52,12 @@ def get_catalog(request: Request) -> ModelCatalog:
     return request.app.state.catalog
 
 
+def get_router(request: Request) -> Router:
+    return request.app.state.router
+
+
 StoreDep = Annotated[Store, Depends(get_store)]
+RouterDep = Annotated[Router, Depends(get_router)]
 RunnerDep = Annotated[Runner, Depends(get_runner)]
 CatalogDep = Annotated[ModelCatalog, Depends(get_catalog)]
 
@@ -60,17 +68,30 @@ def _unique(names: list[str]) -> list[str]:
 
 @router.post("/requests", status_code=201)
 async def create_request(body: RequestCreate, store: StoreDep, runner: RunnerDep) -> RequestRecord:
-    """Save a prompt and run it on the chosen model(s) in the background.
+    """Save a prompt and run it in the background.
 
-    Returns at once with executions in status "queued"; poll
-    GET /api/requests/{id} for progress. An unavailable model is recorded as a
-    failed execution, not rejected, so the attempt stays in history.
+    With `models` given, it runs on those models (manual). With `models`
+    omitted, the router picks one (automatic): the record first has no
+    executions and `routing: null`, then gains the decision and an execution.
+    Poll GET /api/requests/{id} for progress. An unavailable model is recorded
+    as a failed execution, not rejected, so the attempt stays in history.
     """
+    automatic = body.models is None
     record = store.create_request(
-        body, _unique(body.models), think=body.think, max_tokens=body.max_tokens
+        body,
+        [] if automatic else _unique(body.models),
+        routing_mode="automatic" if automatic else "manual",
+        think=body.think,
+        max_tokens=body.max_tokens,
     )
     await runner.schedule([record])
     return record
+
+
+@router.post("/route")
+async def preview_route(body: RoutePreview, routing: RouterDep) -> RoutingDraft:
+    """Show which model the router would pick, without running or storing anything."""
+    return await routing.route(body.prompt, body.source_material, body.system, use_llm=body.use_llm)
 
 
 @router.get("/requests")
@@ -160,7 +181,9 @@ async def create_batch(
     batch_id = store.create_batch(
         name, prompts, models, think=body.think, max_tokens=body.max_tokens
     )
-    await runner.schedule(store.batch_requests(batch_id))
+    # Also record which model the router would have picked for each prompt, so
+    # its choices can later be compared with the evaluation scores.
+    await runner.schedule(store.batch_requests(batch_id), shadow_route=True)
     return store.get_batch(batch_id)
 
 

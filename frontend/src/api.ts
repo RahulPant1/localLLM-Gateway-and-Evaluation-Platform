@@ -14,6 +14,27 @@ export interface ModelEntry {
   num_ctx: number;
   details_available: boolean;
   loaded: boolean;
+  // Described in config/models.yaml; unprofiled models are never picked automatically.
+  profiled: boolean;
+  strengths: string;
+  categories: string[];
+}
+
+export interface RoutingDecision {
+  request_id: string;
+  // True on batch prompts: what the router would have picked; it did not choose the model.
+  shadow: boolean;
+  category: string;
+  complexity: "low" | "medium" | "high";
+  selected_model: string | null;
+  fallback_model: string | null;
+  confidence: number;
+  explanation: string;
+  escalate: boolean;
+  escalation_reason: string | null;
+  decided_by: "signals" | "llm" | "signals_fallback" | "none";
+  candidates: string[];
+  fallback_used: boolean;
 }
 
 export interface Evaluation {
@@ -85,6 +106,7 @@ export interface RequestRecord {
   max_tokens: number | null;
   created_at: string;
   executions: Execution[];
+  routing: RoutingDecision | null;
 }
 
 export interface BatchSummary {
@@ -122,6 +144,7 @@ export interface SystemStatus {
     error: string | null;
   };
   queue: { busy: boolean; running_model: string | null; waiting: number };
+  router: { classifier_model: string | null; llm_enabled: boolean; registry_error: string | null };
   evaluator: { configured: boolean; judge_model: string };
 }
 
@@ -159,7 +182,8 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
 export const api = {
   status: () => call<SystemStatus>("/api/status"),
   models: () => call<{ provider: string; models: ModelEntry[] }>("/api/models"),
-  createRequest: (body: PromptInput & { models: string[]; think: boolean | null }) =>
+  // `models: null` asks the router to pick the model.
+  createRequest: (body: PromptInput & { models: string[] | null; think: boolean | null }) =>
     call<RequestRecord>("/api/requests", body),
   request: (id: string) => call<RequestRecord>(`/api/requests/${id}`),
   requests: () => call<RequestRecord[]>("/api/requests?limit=100"),
@@ -179,3 +203,8 @@ export const api = {
 };
 
 export const isActive = (e: Execution) => e.status === "queued" || e.status === "running";
+
+/** Still being routed or run. An automatic request has no executions until the router decides. */
+export const requestActive = (r: RequestRecord) =>
+  r.executions.some(isActive) ||
+  (r.routing_mode === "automatic" && r.routing === null && r.parent_execution_id === null);

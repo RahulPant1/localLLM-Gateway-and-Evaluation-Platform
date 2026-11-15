@@ -103,6 +103,18 @@ button.primary:disabled { opacity: 0.45; cursor: not-allowed; }
 a.button { font-size: 12.5px; padding: 5px 10px; white-space: nowrap; }
 a.button:hover { border-color: var(--accent); }
 
+.segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin: 6px 0; }
+.segmented button {
+  font: inherit; font-weight: 600; padding: 6px 16px; border: 0; background: var(--panel); color: var(--muted); cursor: pointer;
+}
+.segmented button.on { background: var(--accent); color: var(--accent-text); }
+
+.routing { border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+.routing-head { display: flex; gap: 8px 18px; flex-wrap: wrap; align-items: baseline; }
+.routing-head .value { font-weight: 600; }
+.routing p { margin: 6px 0 0; }
+.routed { margin-right: 4px; color: var(--accent); }
+
 .models { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 .model {
   display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px;

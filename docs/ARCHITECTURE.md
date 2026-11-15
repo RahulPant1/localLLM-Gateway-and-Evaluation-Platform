@@ -1,6 +1,6 @@
 # Architecture and Agreed Decisions
 
-Status: architecture approved on 2026-11-14. Phases 0, 1 and 2 are complete (2026-11-15). Next step is Phase 3. How to run and use the app: [USAGE.md](USAGE.md).
+Status: architecture approved on 2026-11-14. Phases 0 to 3 are complete (2026-11-15). Next step is Phase 4. How to run and use the app: [USAGE.md](USAGE.md).
 
 This document records what was found in the environment, the architecture that was agreed, and the reasons. Requirements are in [DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md).
 
@@ -141,6 +141,30 @@ Phase 2 went beyond the original table at the owner's request. Batch evaluation 
 - **After a failed turn**, the next message continues from the last completed answer.
 - **Deferred:** streaming replies; including earlier turns in the judge export (needed when Phase 4 evaluates follow-up answers; batch exports are unaffected because batch prompts are first turns).
 - Model output is rendered as Markdown in the UI; raw HTML in output is not rendered.
+
+## Phase 3: router as built (2026-11-15)
+
+- **Registry and policy** live in `config/models.yaml`: model strengths, the classifier model, and for each category an ordered list of models (optionally per complexity). Models in an inner list are equals; the loaded one is preferred. Unlisted models are "unprofiled": usable manually, never auto-selected except as a last resort.
+- **Quick rules** (`routing/signals.py`): weighted regular-expression rules vote for a category; a separate set of cues estimates complexity. "Clarity" (0 to 1) measures how decisively one category wins.
+- **Classifier model** is asked only when clarity is below 0.4 *and* the two leading categories would pick different models. It runs with thinking off and schema-constrained JSON, about 0.5 seconds when `qwen3.5:4b` is loaded, plus a model swap when it is not. An invalid answer or failure falls back to the rules with confidence capped at 0.5. `GATEWAY_ROUTER_LLM=off` disables it.
+- **Confidence** comes from how the decision was reached, never from a model's self-report: 0.35 to 0.95 from rule clarity; 0.85 when the classifier agrees with the rules; 0.6 when the classifier decides alone. These are starting values to be checked against evaluation scores in Phase 6.
+- **Escalation** is advice only. It is set for high complexity, when no suitable model is installed, when the input exceeds every candidate's context, or when nothing is installed.
+- **Context fit:** a candidate whose context window cannot hold the input (75% budget) is passed over for one that can.
+- **Fallback at run time:** if the selected model fails (not found, generation failed, timeout), the fallback model runs once; both attempts are kept. Not retried when Ollama itself is unreachable.
+- **Automatic requests** are routed in the background: the record first has no executions and `routing: null`, then gains the decision and an execution. `POST /api/route` previews a decision without running anything.
+- **Shadow routing:** every batch prompt gets a decision recorded with `shadow = true`. It does not choose the model; it lets Phase 6 compare the router's pick with the best-scoring model.
+- **Follow-ups** are never re-routed.
+
+Measured accuracy (2026-11-15):
+
+| Set | What | Result |
+|---|---|---|
+| Tuning set, 66 prompts | Quick rules alone, right category | 65 of 66 |
+| Held-out set, 25 prompts (rules never tuned on it) | Quick rules alone, right category | 18 of 25 |
+| Held-out set | Full router with classifier, right category | 20 of 25 |
+| Held-out set | Full router, right model | 23 of 25 |
+
+On the held-out set the classifier was needed for 11 of 25 prompts. Both wrong-model cases were coding questions phrased as plain questions that went to the general model. The held-out file must stay untuned; add new prompts to `routing_prompts.yaml`.
 
 ## Known risks
 

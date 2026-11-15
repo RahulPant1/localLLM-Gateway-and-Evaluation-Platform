@@ -25,6 +25,11 @@ export function ModelPicker({ models, error, selected, onChange }: Props) {
             <span className="model-name">
               {m.name}
               {m.loaded && <span className="pill good small">loaded</span>}
+              {!m.profiled && (
+                <span className="pill small" title="Not described in config/models.yaml, so automatic routing never picks it">
+                  unprofiled
+                </span>
+              )}
             </span>
             <span className="muted small">
               {[m.parameter_size, m.quantization, gb(m.size_bytes), `context ${m.num_ctx}`]
@@ -32,7 +37,7 @@ export function ModelPicker({ models, error, selected, onChange }: Props) {
                 .join(" · ")}
             </span>
             <span className="muted small">
-              {m.details_available ? m.capabilities.join(", ") : "details unavailable"}
+              {m.strengths || (m.details_available ? m.capabilities.join(", ") : "details unavailable")}
             </span>
           </span>
         </label>

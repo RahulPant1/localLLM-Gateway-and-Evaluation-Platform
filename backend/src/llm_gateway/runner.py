@@ -1,4 +1,4 @@
-"""Runs stored executions in the background and records their outcome.
+"""Runs stored requests in the background and records their outcome.
 
 Submitting a request only writes database rows and schedules work here, so
 the HTTP call returns at once and the result survives a page refresh.
@@ -12,20 +12,31 @@ from llm_gateway.catalog import ModelCatalog
 from llm_gateway.conversation import compose_prompt, history_messages
 from llm_gateway.execution import ExecutionQueue
 from llm_gateway.providers.base import GenerationRequest, ModelProvider, ProviderError
+from llm_gateway.routing.router import Router
 from llm_gateway.schemas import Execution, RequestRecord
 from llm_gateway.store import Store
 
 logger = logging.getLogger(__name__)
 
+# Failures where trying the fallback model makes sense. An unreachable
+# provider is not one: the fallback would fail the same way.
+RETRY_ON_FALLBACK = {"model_not_found", "generation_failed", "generation_timeout"}
+
 
 class Runner:
     def __init__(
-        self, store: Store, provider: ModelProvider, catalog: ModelCatalog, queue: ExecutionQueue
+        self,
+        store: Store,
+        provider: ModelProvider,
+        catalog: ModelCatalog,
+        queue: ExecutionQueue,
+        router: Router,
     ) -> None:
         self._store = store
         self._provider = provider
         self._catalog = catalog
         self._queue = queue
+        self._router = router
         self._tasks: set[asyncio.Task] = set()
 
     async def _loaded_names(self) -> set[str]:
@@ -34,34 +45,104 @@ class Runner:
         except ProviderError:
             return set()
 
-    async def schedule(self, requests: Iterable[RequestRecord]) -> None:
-        """Queue every execution of the given requests as one background job.
+    async def schedule(
+        self, requests: Iterable[RequestRecord], *, shadow_route: bool = False
+    ) -> None:
+        """Run the given requests as one background job.
 
-        Work is grouped by model, so a batch of 10 prompts on 4 models costs
-        4 model loads instead of 40. The model already in memory goes first.
+        `shadow_route` records what the router would have chosen for each
+        request without letting it pick the model (used for batches).
         """
-        pairs = [(e, r) for r in requests for e in r.executions if e.status == "queued"]
-        loaded = await self._loaded_names()
-        order: dict[str, int] = {}
-        for execution, _ in pairs:
-            order.setdefault(execution.model, len(order))
-        pairs.sort(key=lambda pair: (pair[0].model not in loaded, order[pair[0].model]))
-        task = asyncio.create_task(self._run_all(pairs))
+        task = asyncio.create_task(self._run_all(list(requests), shadow_route))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def _run_all(self, pairs: list[tuple[Execution, RequestRecord]]) -> None:
-        for index, (execution, request) in enumerate(pairs):
-            try:
-                await self._run_one(execution, request)
-            except asyncio.CancelledError:
-                for remaining, _ in pairs[index:]:
-                    self._store.fail_execution(
-                        remaining.id, "interrupted", "The backend stopped before this finished"
-                    )
-                raise
+    @staticmethod
+    def _needs_routing(request: RequestRecord) -> bool:
+        return (
+            request.routing_mode == "automatic"
+            and request.parent_execution_id is None
+            and request.routing is None
+        )
 
-    async def _run_one(self, execution: Execution, request: RequestRecord) -> None:
+    async def _run_all(self, requests: list[RequestRecord], shadow_route: bool) -> None:
+        try:
+            pairs = await self._route(requests, shadow_route)
+            # Group by model, so 10 prompts on 4 models cost 4 model loads, not 40.
+            # The model already in memory goes first.
+            loaded = await self._loaded_names()
+            order: dict[str, int] = {}
+            for execution, _ in pairs:
+                order.setdefault(execution.model, len(order))
+            pairs.sort(key=lambda pair: (pair[0].model not in loaded, order[pair[0].model]))
+            pending = list(pairs)
+            while pending:
+                execution, request = pending[0]
+                succeeded, code = await self._run_one(execution, request)
+                pending.pop(0)
+                # No await between a failure and queuing its fallback, so a client
+                # never sees the request as finished in between.
+                retry = self._fallback_for(request, execution, succeeded, code)
+                if retry:
+                    pending.insert(0, (retry, request))
+        except asyncio.CancelledError:
+            self._interrupt(requests)
+            raise
+        except Exception:
+            logger.exception("Background run failed")
+            self._interrupt(requests)
+
+    def _interrupt(self, requests: list[RequestRecord]) -> None:
+        """Close whatever this job left unfinished."""
+        self._store.fail_unrouted([r.id for r in requests])
+        for request in requests:
+            current = self._store.get_request(request.id)
+            for execution in current.executions if current else []:
+                if execution.status in ("queued", "running"):
+                    self._store.fail_execution(
+                        execution.id, "interrupted", "The backend stopped before this finished"
+                    )
+
+    async def _route(
+        self, requests: list[RequestRecord], shadow_route: bool
+    ) -> list[tuple[Execution, RequestRecord]]:
+        """Decide models where needed and return every execution that is ready to run."""
+        pairs: list[tuple[Execution, RequestRecord]] = []
+        for request in requests:
+            if self._needs_routing(request) or (shadow_route and request.routing is None):
+                shadow = not self._needs_routing(request)
+                draft = await self._router.route(
+                    request.prompt, request.source_material, request.system
+                )
+                self._store.add_decision(request.id, draft, shadow=shadow)
+                if not shadow and draft.selected_model:
+                    self._store.add_execution(request.id, draft.selected_model)
+                request = self._store.get_request(request.id)
+            pairs.extend((e, request) for e in request.executions if e.status == "queued")
+        return pairs
+
+    def _fallback_for(
+        self, request: RequestRecord, execution: Execution, succeeded: bool, code: str | None
+    ) -> Execution | None:
+        """After the routed model fails, queue the fallback model once."""
+        routing = request.routing
+        if (
+            succeeded
+            or routing is None
+            or routing.shadow
+            or routing.fallback_used
+            or code not in RETRY_ON_FALLBACK
+            or not routing.fallback_model
+            or execution.model != routing.selected_model
+        ):
+            return None
+        self._store.mark_fallback_used(request.id)
+        routing.fallback_used = True
+        return self._store.add_execution(request.id, routing.fallback_model)
+
+    async def _run_one(
+        self, execution: Execution, request: RequestRecord
+    ) -> tuple[bool, str | None]:
         """Run one execution. Any failure is recorded on that execution only."""
         try:
             history = []
@@ -82,11 +163,11 @@ class Runner:
             )
         except ProviderError as exc:
             self._store.fail_execution(execution.id, exc.code, str(exc))
-            return
+            return False, exc.code
         except Exception as exc:  # noqa: BLE001 - one bad execution must not stop a batch
             logger.exception("Execution %s failed unexpectedly", execution.id)
             self._store.fail_execution(execution.id, "internal_error", f"{type(exc).__name__}")
-            return
+            return False, "internal_error"
         result = record.result
         self._store.complete_execution(
             execution.id,
@@ -97,6 +178,7 @@ class Runner:
             metrics=result.model_dump(exclude={"model", "response", "thinking", "warnings"}),
             warnings=result.warnings,
         )
+        return True, None
 
     async def shutdown(self) -> None:
         for task in list(self._tasks):

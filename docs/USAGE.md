@@ -36,6 +36,24 @@ uv run pytest -m live     # real Ollama; loads a model
 - **Batch runs**: many prompts on many models, with a results grid and export.
 - **History**: past single and comparison requests.
 
+## Automatic routing
+
+In the Workspace, **Automatic** lets the gateway choose the model; **Manual** lets you pick one or several. With Automatic, the response shows a routing panel: the chosen model, task type, complexity, confidence, fallback and the reasons.
+
+- What each model is used for is set in `config/models.yaml`. Edit it and restart the backend.
+- `GATEWAY_ROUTER_LLM=off` in `.env` makes routing use only the quick rules, never the classifier model.
+- To see how the router treats a set of prompts without running them:
+
+  ```bash
+  cd backend
+  uv run python scripts/router_report.py --misses     # quick rules only, instant
+  uv run python scripts/router_live.py                # full router, uses Ollama
+  ```
+
+- Add your own typical prompts, with the category you expect, to `backend/tests/data/routing_prompts.yaml`.
+
+In batch results, a dot (●) marks the model the router would have picked for each prompt.
+
 ## Follow-up chat
 
 Every completed answer has a **Continue chat with this model** button, in the Workspace, History and batch results. It opens a conversation in which the model sees all earlier messages. The meter under the conversation shows how much of the model's context window is used; at 90% the conversation cannot be continued and a new request is needed. Local models hold about 8,000 tokens (MedGemma about 4,000), far less than cloud assistants.

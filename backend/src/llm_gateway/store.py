@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
+from llm_gateway.routing.types import RoutingDecision, RoutingDraft
 from llm_gateway.schemas import (
     BatchSummary,
     Evaluation,
@@ -87,6 +88,27 @@ MIGRATIONS = [
     """
     ALTER TABLE requests ADD COLUMN parent_execution_id TEXT REFERENCES executions(id);
     CREATE INDEX requests_parent ON requests(parent_execution_id);
+    """,
+    # 3: routing decisions, one per request.
+    """
+    CREATE TABLE routing_decisions (
+        request_id TEXT PRIMARY KEY REFERENCES requests(id),
+        shadow INTEGER NOT NULL DEFAULT 0,
+        category TEXT NOT NULL,
+        complexity TEXT NOT NULL,
+        selected_model TEXT,
+        fallback_model TEXT,
+        confidence REAL NOT NULL,
+        explanation TEXT NOT NULL,
+        escalate INTEGER NOT NULL DEFAULT 0,
+        escalation_reason TEXT,
+        decided_by TEXT NOT NULL,
+        candidates TEXT NOT NULL DEFAULT '[]',
+        signals TEXT,
+        llm TEXT,
+        fallback_used INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+    );
     """,
 ]
 
@@ -217,6 +239,71 @@ class Store:
                 )
         return batch_id
 
+    def add_execution(self, request_id: str, model: str) -> Execution:
+        """Add a queued execution to an existing request (routed model or fallback)."""
+        execution_id = _id()
+        position = self._db.execute(
+            "SELECT COUNT(*) FROM executions WHERE request_id = ?", (request_id,)
+        ).fetchone()[0]
+        self._db.execute(
+            "INSERT INTO executions (id, request_id, position, model, status, created_at)"
+            " VALUES (?,?,?,?,'queued',?)",
+            (execution_id, request_id, position, model, _now()),
+        )
+        return self.get_execution(execution_id)[0]
+
+    def add_decision(self, request_id: str, draft: RoutingDraft, *, shadow: bool = False) -> None:
+        self._db.execute(
+            "INSERT OR REPLACE INTO routing_decisions (request_id, shadow, category, complexity,"
+            " selected_model, fallback_model, confidence, explanation, escalate, escalation_reason,"
+            " decided_by, candidates, signals, llm, created_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                request_id,
+                shadow,
+                draft.category,
+                draft.complexity,
+                draft.selected_model,
+                draft.fallback_model,
+                draft.confidence,
+                draft.explanation,
+                draft.escalate,
+                draft.escalation_reason,
+                draft.decided_by,
+                json.dumps(draft.candidates),
+                draft.signals.model_dump_json() if draft.signals else None,
+                json.dumps(draft.llm) if draft.llm else None,
+                _now(),
+            ),
+        )
+
+    def mark_fallback_used(self, request_id: str) -> None:
+        self._db.execute(
+            "UPDATE routing_decisions SET fallback_used = 1 WHERE request_id = ?", (request_id,)
+        )
+
+    def fail_unrouted(self, request_ids: list[str] | None = None) -> int:
+        """Close automatic requests whose routing never finished, so nothing waits on them."""
+        where = (
+            "r.routing_mode = 'automatic' AND r.parent_execution_id IS NULL"
+            " AND NOT EXISTS (SELECT 1 FROM routing_decisions d WHERE d.request_id = r.id)"
+        )
+        params: list = []
+        if request_ids is not None:
+            if not request_ids:
+                return 0
+            where += f" AND r.id IN ({','.join('?' * len(request_ids))})"
+            params = list(request_ids)
+        rows = self._db.execute(f"SELECT r.id FROM requests r WHERE {where}", params).fetchall()
+        for row in rows:
+            self._db.execute(
+                "INSERT INTO routing_decisions (request_id, category, complexity, confidence,"
+                " explanation, escalate, decided_by, created_at)"
+                " VALUES (?, 'general_qa', 'low', 0, ?, 0, 'none', ?)",
+                (row["id"], "Routing was interrupted before a model was chosen.", _now()),
+            )
+        return len(rows)
+
     def mark_running(self, execution_id: str) -> None:
         self._db.execute(
             "UPDATE executions SET status='running', started_at=? WHERE id=?",
@@ -318,17 +405,39 @@ class Store:
             )
         return found
 
+    def _decisions_for(self, request_ids: list[str]) -> dict[str, RoutingDecision]:
+        if not request_ids:
+            return {}
+        marks = ",".join("?" * len(request_ids))
+        found = {}
+        for row in self._db.execute(
+            f"SELECT * FROM routing_decisions WHERE request_id IN ({marks})", request_ids
+        ):
+            data = dict(row)
+            data["candidates"] = json.loads(data["candidates"])
+            data["signals"] = json.loads(data["signals"]) if data["signals"] else None
+            data["llm"] = json.loads(data["llm"]) if data["llm"] else None
+            found[row["request_id"]] = RoutingDecision(**data)
+        return found
+
     def _requests(self, where: str, params: tuple, order: str) -> list[RequestRecord]:
         rows = self._db.execute(
             f"SELECT * FROM requests WHERE {where} ORDER BY {order}", params
         ).fetchall()
         executions = self._executions_for([row["id"] for row in rows])
+        decisions = self._decisions_for([row["id"] for row in rows])
         records = []
         for row in rows:
             data = dict(row)
             data.pop("position")
             data["think"] = None if data["think"] is None else bool(data["think"])
-            records.append(RequestRecord(**data, executions=executions.get(row["id"], [])))
+            records.append(
+                RequestRecord(
+                    **data,
+                    executions=executions.get(row["id"], []),
+                    routing=decisions.get(row["id"]),
+                )
+            )
         return records
 
     def get_request(self, request_id: str) -> RequestRecord | None:

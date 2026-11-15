@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { RequestRecord } from "../api";
 import { Chat } from "./Chat";
 import { ExecutionCard } from "./ExecutionCard";
+import { RoutingPanel } from "./RoutingPanel";
 
 /** A request's prompt and one card per model it ran on, or the conversation continued from one of them. */
 export function RequestView({ request, showPrompt = true }: { request: RequestRecord; showPrompt?: boolean }) {
@@ -31,6 +32,12 @@ export function RequestView({ request, showPrompt = true }: { request: RequestRe
             </details>
           )}
         </div>
+      )}
+      {request.routing ? (
+        <RoutingPanel routing={request.routing} />
+      ) : (
+        request.routing_mode === "automatic" &&
+        request.parent_execution_id === null && <p className="muted">Choosing a model…</p>
       )}
       <div className={request.executions.length > 1 ? "cards compare" : "cards"}>
         {request.executions.map((e) => (

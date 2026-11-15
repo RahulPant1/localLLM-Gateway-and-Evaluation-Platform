@@ -7,6 +7,7 @@ prefixed with `GATEWAY_` so it cannot collide with unrelated variables.
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -28,6 +29,12 @@ class Settings(BaseSettings):
     judge_model: str = "claude-opus-5-5"
     # Context window requested for models whose Modelfile does not set one.
     default_num_ctx: int = Field(default=8192, gt=0)
+    # Model registry and routing policy.
+    registry_path: Path = Path("config/models.yaml")
+    # "auto": ask the classifier model when the quick rules are unsure. "off": rules only.
+    router_llm: Literal["auto", "off"] = "auto"
+    # Below this clarity (0-1) the quick rules count as unsure.
+    router_clarity_threshold: float = Field(default=0.4, ge=0, le=1)
     # Upper limit for one generation, including any model load.
     generation_timeout_seconds: float = Field(default=300.0, gt=0)
     # SecretStr keeps the key out of repr(), logs and JSON dumps by default.
@@ -41,7 +48,7 @@ class Settings(BaseSettings):
             return None
         return value
 
-    @field_validator("database_path")
+    @field_validator("database_path", "registry_path")
     @classmethod
     def _resolve_database_path(cls, value: Path) -> Path:
         return value if value.is_absolute() else PROJECT_ROOT / value

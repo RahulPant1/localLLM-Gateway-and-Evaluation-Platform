@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, isActive, type ModelEntry, type RequestRecord } from "../api";
+import { api, requestActive, type ModelEntry, type RequestRecord } from "../api";
 import { usePolling } from "../hooks";
 import { ModelPicker } from "./ModelPicker";
 import { RequestView } from "./RequestView";
@@ -13,13 +13,14 @@ export function Workspace({ models, modelsError }: Props) {
   const [prompt, setPrompt] = useState("");
   const [system, setSystem] = useState("");
   const [source, setSource] = useState("");
+  const [automatic, setAutomatic] = useState(true);
   const [selected, setSelected] = useState<string[]>([]);
   const [thinking, setThinking] = useState(true);
   const [current, setCurrent] = useState<RequestRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const running = current?.executions.some(isActive) ?? false;
+  const running = current ? requestActive(current) : false;
   usePolling(
     async () => {
       if (!current || !running) return;
@@ -42,7 +43,7 @@ export function Workspace({ models, modelsError }: Props) {
           prompt,
           system: system || null,
           source_material: source || null,
-          models: selected,
+          models: automatic ? null : selected,
           think: thinking ? null : false,
         }),
       );
@@ -53,7 +54,7 @@ export function Workspace({ models, modelsError }: Props) {
     }
   };
 
-  const ready = prompt.trim().length > 0 && selected.length > 0 && !submitting;
+  const ready = prompt.trim().length > 0 && (automatic || selected.length > 0) && !submitting;
   return (
     <div className="columns">
       <section className="panel">
@@ -78,8 +79,27 @@ export function Workspace({ models, modelsError }: Props) {
         </details>
 
         <h3>Model</h3>
-        <p className="muted small">Pick one model, or several to compare them on this prompt. They run one after another.</p>
-        <ModelPicker models={models} error={modelsError} selected={selected} onChange={setSelected} />
+        <div className="segmented" role="group" aria-label="Model selection">
+          <button className={automatic ? "on" : ""} onClick={() => setAutomatic(true)}>
+            Automatic
+          </button>
+          <button className={automatic ? "" : "on"} onClick={() => setAutomatic(false)}>
+            Manual
+          </button>
+        </div>
+        {automatic ? (
+          <p className="muted small">
+            The gateway works out what kind of task this is and picks the most suitable installed model. The decision
+            and its reasons are shown with the response.
+          </p>
+        ) : (
+          <>
+            <p className="muted small">
+              Pick one model, or several to compare them on this prompt. They run one after another.
+            </p>
+            <ModelPicker models={models} error={modelsError} selected={selected} onChange={setSelected} />
+          </>
+        )}
 
         <label className="check">
           <input type="checkbox" checked={thinking} onChange={(e) => setThinking(e.target.checked)} />
@@ -87,7 +107,7 @@ export function Workspace({ models, modelsError }: Props) {
         </label>
 
         <button className="primary" disabled={!ready} onClick={submit}>
-          {selected.length > 1 ? `Run on ${selected.length} models` : "Run"}
+          {automatic ? "Route and run" : selected.length > 1 ? `Run on ${selected.length} models` : "Run"}
         </button>
         {error && <p className="error">{error}</p>}
       </section>

@@ -42,6 +42,9 @@ class FakeProvider(ModelProvider):
         self.running = 0
         self.max_running = 0
         self.calls: list[str] = []
+        # What the fake returns when asked to classify a request (schema-constrained call).
+        self.classifier_answer = '{"category": "general_qa", "complexity": "low"}'
+        self.classifier_calls = 0
         self.list_calls = 0
 
     async def version(self) -> str:
@@ -63,6 +66,11 @@ class FakeProvider(ModelProvider):
     async def generate(self, request: GenerationRequest, model: ModelInfo) -> GenerationResult:
         if self.error:
             raise self.error
+        if request.response_schema:
+            self.classifier_calls += 1
+            return GenerationResult(
+                model=model.name, response=self.classifier_answer, num_ctx=model.num_ctx
+            )
         self.running += 1
         self.max_running = max(self.max_running, self.running)
         try:
@@ -80,8 +88,32 @@ def provider() -> FakeProvider:
     return FakeProvider()
 
 
+TEST_REGISTRY = """
+classifier_model: small:1b
+models:
+  small:1b: {strengths: Quick general model}
+  thinker:8b: {strengths: Careful reasoning}
+policy:
+  general_qa: {default: [small:1b, thinker:8b]}
+  classification: {default: [small:1b]}
+  extraction: {default: [small:1b]}
+  structured_output: {default: [[small:1b, thinker:8b]]}
+  reasoning: {default: [thinker:8b, small:1b]}
+  coding: {default: [coder:7b, thinker:8b, small:1b]}
+  medical: {default: [medic:4b]}
+last_resort: [small:1b]
+"""
+
+
 @pytest.fixture
-def make_client(tmp_path, provider, request):
+def registry_path(tmp_path):
+    path = tmp_path / "models.yaml"
+    path.write_text(TEST_REGISTRY)
+    return path
+
+
+@pytest.fixture
+def make_client(tmp_path, provider, request, registry_path):
     """Build a test client with explicit settings and the fake provider.
 
     `_env_file=None` stops the developer's real `.env` (and any real API key)
@@ -90,6 +122,7 @@ def make_client(tmp_path, provider, request):
 
     def _make(**overrides) -> TestClient:
         overrides.setdefault("database_path", tmp_path / "test.db")
+        overrides.setdefault("registry_path", registry_path)
         settings = Settings(_env_file=None, **overrides)
         app = create_app(provider=provider, settings=settings)
         client = TestClient(app)

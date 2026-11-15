@@ -52,6 +52,11 @@ export function StatusStrip() {
       <span className={`pill ${evaluator.configured ? "good" : "neutral"}`} title={`Judge: ${evaluator.judge_model}`}>
         Claude evaluator {evaluator.configured ? "ready" : "not configured"}
       </span>
+      {status.router.registry_error && (
+        <span className="pill bad" title={status.router.registry_error}>
+          Model registry error
+        </span>
+      )}
       <span className="item muted">{status.environment.toUpperCase()}</span>
     </div>
   );

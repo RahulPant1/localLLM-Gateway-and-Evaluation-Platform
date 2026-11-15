@@ -36,6 +36,23 @@ export const WARNING_TEXT: Record<string, string> = {
   context_window_full: "The context window filled up",
 };
 
+export const CATEGORY_TEXT: Record<string, string> = {
+  general_qa: "General Q&A",
+  classification: "Classification",
+  extraction: "Information extraction",
+  structured_output: "Structured output",
+  reasoning: "Reasoning and analysis",
+  coding: "Coding",
+  medical: "Medical documents",
+};
+
+export const DECIDED_BY_TEXT: Record<string, string> = {
+  signals: "quick rules",
+  llm: "classifier model",
+  signals_fallback: "quick rules (classifier not used)",
+  none: "not decided",
+};
+
 export const STATUS_TEXT: Record<string, string> = {
   queued: "Queued",
   running: "Running",

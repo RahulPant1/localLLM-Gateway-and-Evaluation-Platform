@@ -153,6 +153,8 @@ class OllamaProvider(ModelProvider):
             "stream": False,
             "options": options,
         }
+        if request.response_schema:
+            payload["format"] = request.response_schema
         # Sending `think` to a model without that capability is an error, so
         # only thinking-capable models get it. With it set, Ollama returns the
         # reasoning in its own field instead of mixed into the answer.

@@ -136,7 +136,7 @@ def test_validation(client):
     assert client.get("/api/batches/nope").status_code == 404
 
 
-def test_history_survives_restart_and_unfinished_work_is_failed(tmp_path, provider):
+def test_history_survives_restart_and_unfinished_work_is_failed(tmp_path, provider, registry_path):
     database = tmp_path / "restart.db"
     store = Store(database)
     from llm_gateway.schemas import PromptInput
@@ -147,7 +147,7 @@ def test_history_survives_restart_and_unfinished_work_is_failed(tmp_path, provid
 
     from fastapi.testclient import TestClient
 
-    settings = Settings(_env_file=None, database_path=database)
+    settings = Settings(_env_file=None, database_path=database, registry_path=registry_path)
     with TestClient(create_app(provider=provider, settings=settings)) as client:
         execution = client.get(f"/api/requests/{record.id}").json()["executions"][0]
     assert (execution["status"], execution["error_code"]) == ("failed", "interrupted")

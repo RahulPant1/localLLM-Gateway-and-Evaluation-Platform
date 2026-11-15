@@ -15,11 +15,23 @@ export function splitPrompts(text: string): string[] {
     .filter(Boolean);
 }
 
-function Cell({ execution, selected, onClick }: { execution: Execution; selected: boolean; onClick: () => void }) {
+interface CellProps {
+  execution: Execution;
+  selected: boolean;
+  routed: boolean;
+  onClick: () => void;
+}
+
+function Cell({ execution, selected, routed, onClick }: CellProps) {
   const score = meanScore(execution);
   return (
     <td>
-      <button className={`cell status-${execution.status} ${selected ? "selected" : ""}`} onClick={onClick}>
+      <button
+        className={`cell status-${execution.status} ${selected ? "selected" : ""}`}
+        title={routed ? "The router would have picked this model for this prompt" : undefined}
+        onClick={onClick}
+      >
+        {routed && <span className="routed">●</span>}
         {execution.status === "completed" ? seconds(execution.execution_ms) : execution.status}
         {score != null && <span className="score">{score.toFixed(1)}</span>}
       </button>
@@ -186,6 +198,7 @@ export function Batches({ models, modelsError }: Props) {
                             key={m}
                             execution={execution}
                             selected={cell === execution.id}
+                            routed={r.routing?.selected_model === m}
                             onClick={() => setCell(execution.id)}
                           />
                         ) : (
@@ -198,7 +211,8 @@ export function Batches({ models, modelsError }: Props) {
               </table>
             </div>
             <p className="muted small">
-              Cells show run time, and the mean evaluation score once evaluated. Click a cell to read the output.
+              Cells show run time, and the mean evaluation score once evaluated. A dot (●) marks the model the
+              router would have picked for that prompt. Click a cell to read the output.
             </p>
             {picked && (
               <RequestView

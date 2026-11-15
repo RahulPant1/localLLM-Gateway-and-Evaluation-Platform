@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, isActive, type RequestRecord } from "../api";
+import { api, requestActive, type RequestRecord } from "../api";
 import { snippet, when } from "../format";
 import { usePolling } from "../hooks";
 import { RequestView } from "./RequestView";
@@ -9,7 +9,7 @@ export function History() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const anyActive = requests?.some((r) => r.executions.some(isActive)) ?? false;
+  const anyActive = requests?.some(requestActive) ?? false;
   usePolling(
     async () => {
       try {
@@ -39,8 +39,9 @@ export function History() {
                 <button className={`row ${openId === r.id ? "selected" : ""}`} onClick={() => setOpenId(r.id)}>
                   <span className="row-title">{snippet(r.prompt, 70)}</span>
                   <span className="muted small">
-                    {when(r.created_at)} · {r.executions.map((e) => e.model).join(", ")}
-                    {r.executions.some(isActive) && " · in progress"}
+                    {when(r.created_at)} · {r.routing_mode === "automatic" && "auto: "}
+                    {r.executions.map((e) => e.model).join(", ") || "no model"}
+                    {requestActive(r) && " · in progress"}
                     {failed > 0 && ` · ${failed} failed`}
                     {r.executions.some((e) => e.follow_up_count > 0) && " · conversation"}
                   </span>

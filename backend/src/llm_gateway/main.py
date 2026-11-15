@@ -26,6 +26,8 @@ from llm_gateway.providers.base import (
     ProviderUnavailable,
 )
 from llm_gateway.providers.ollama import OllamaProvider
+from llm_gateway.routing.registry import load_registry
+from llm_gateway.routing.router import Router
 from llm_gateway.runner import Runner
 from llm_gateway.store import Store
 from llm_gateway.system import Environment, GpuStatus, detect_environment, gpu_status
@@ -43,6 +45,11 @@ class HealthResponse(BaseModel):
 
 class ModelListEntry(ModelInfo):
     loaded: bool
+    # Whether config/models.yaml describes this model. Unprofiled models can be
+    # run manually but are not chosen by automatic routing.
+    profiled: bool
+    strengths: str
+    categories: list[str]
 
 
 class ModelListResponse(BaseModel):
@@ -59,6 +66,13 @@ class ProviderStatus(BaseModel):
     loaded_models: list[LoadedModel] = []
 
 
+class RouterStatus(BaseModel):
+    classifier_model: str | None
+    # Whether the classifier model is asked when the quick rules are unsure.
+    llm_enabled: bool
+    registry_error: str | None
+
+
 class EvaluatorStatus(BaseModel):
     configured: bool
     judge_model: str
@@ -72,6 +86,7 @@ class StatusResponse(BaseModel):
     provider: ProviderStatus
     gpu: GpuStatus
     queue: QueueState
+    router: RouterStatus
     evaluator: EvaluatorStatus
 
 
@@ -121,11 +136,22 @@ def create_app(provider: ModelProvider | None = None, settings: Settings | None 
         store = Store(config.database_path)
         # Anything still queued or running belongs to a process that has gone.
         store.fail_unfinished()
+        store.fail_unrouted()
         app.state.provider = active
         app.state.catalog = ModelCatalog(active)
         app.state.queue = ExecutionQueue(active)
         app.state.store = store
-        app.state.runner = Runner(store, active, app.state.catalog, app.state.queue)
+        app.state.router = Router(
+            load_registry(config.registry_path),
+            active,
+            app.state.catalog,
+            app.state.queue,
+            use_llm=config.router_llm == "auto",
+            clarity_threshold=config.router_clarity_threshold,
+        )
+        app.state.runner = Runner(
+            store, active, app.state.catalog, app.state.queue, app.state.router
+        )
         yield
         await app.state.runner.shutdown()
         store.close()
@@ -159,25 +185,36 @@ def create_app(provider: ModelProvider | None = None, settings: Settings | None 
 
     @app.get("/api/models")
     async def models(
-        provider: ProviderDep, catalog: CatalogDep, refresh: bool = False
+        request: Request, provider: ProviderDep, catalog: CatalogDep, refresh: bool = False
     ) -> ModelListResponse:
         """Installed models, read live from the provider (cached a few seconds)."""
         installed, loaded = await asyncio.gather(
             catalog.list(refresh=refresh), provider.list_loaded()
         )
         loaded_names = {m.name for m in loaded}
+        registry = request.app.state.router.registry
         return ModelListResponse(
             provider=provider.name,
             models=[
-                ModelListEntry(**m.model_dump(), loaded=m.name in loaded_names) for m in installed
+                ModelListEntry(
+                    **m.model_dump(),
+                    loaded=m.name in loaded_names,
+                    profiled=registry.is_profiled(m.name),
+                    strengths=registry.models[m.name].strengths
+                    if m.name in registry.models
+                    else "",
+                    categories=registry.categories_of(m.name),
+                )
+                for m in installed
             ],
         )
 
     @app.get("/api/status")
     async def status(
-        settings: SettingsDep, provider: ProviderDep, queue: QueueDep
+        request: Request, settings: SettingsDep, provider: ProviderDep, queue: QueueDep
     ) -> StatusResponse:
         """Live system status. Each section degrades on its own."""
+        registry = request.app.state.router.registry
 
         async def provider_status() -> ProviderStatus:
             base = {"name": provider.name, "url": settings.ollama_url}
@@ -195,6 +232,11 @@ def create_app(provider: ModelProvider | None = None, settings: Settings | None 
             provider=provider_info,
             gpu=gpu,
             queue=queue.state(),
+            router=RouterStatus(
+                classifier_model=registry.classifier_model,
+                llm_enabled=request.app.state.router.use_llm,
+                registry_error=registry.error,
+            ),
             evaluator=EvaluatorStatus(
                 configured=settings.evaluator_configured, judge_model=settings.judge_model
             ),

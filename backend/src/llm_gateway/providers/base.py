@@ -83,6 +83,8 @@ class GenerationRequest(BaseModel):
     # separate from the answer.
     think: bool | None = None
     max_tokens: int | None = Field(default=None, gt=0)
+    # A JSON schema the answer must follow (used by the routing classifier).
+    response_schema: dict | None = None
 
 
 class GenerationResult(BaseModel):

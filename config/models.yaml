@@ -16,6 +16,8 @@ models:
     strengths: Step-by-step reasoning and analysis. Always thinks first, so it is the slowest.
   MedAIBase/MedGemma1.5:4b-it-q8_0:
     strengths: Clinical and medical-document understanding. Small context window (4096 tokens).
+  gemma4:e4b-it-q4_K_M:
+    strengths: Fast general model with short thinking. Best of the five on the reasoning prompts and on function calling; weaker on exact output formats.
 
 # For each task category, the models to try, best first.
 #   default: used for any complexity without its own list.
@@ -24,21 +26,21 @@ models:
 # the GPU is preferred, which avoids a model swap of about 6 seconds.
 policy:
   general_qa:
-    default: [qwen3.5:4b, deepseek-r1:8b]
+    default: [qwen3.5:4b, gemma4:e4b-it-q4_K_M, deepseek-r1:8b]
     high: [deepseek-r1:8b, qwen3.5:4b]
   classification:
-    default: [qwen3.5:4b, deepseek-r1:8b]
+    default: [[qwen3.5:4b, gemma4:e4b-it-q4_K_M], deepseek-r1:8b]
   extraction:
-    default: [qwen3.5:4b, qwen2.5-coder:7b]
+    default: [[qwen3.5:4b, gemma4:e4b-it-q4_K_M], qwen2.5-coder:7b]
   structured_output:
-    default: [[qwen3.5:4b, qwen2.5-coder:7b], deepseek-r1:8b]
+    default: [[qwen3.5:4b, qwen2.5-coder:7b], gemma4:e4b-it-q4_K_M, deepseek-r1:8b]
   reasoning:
-    default: [deepseek-r1:8b, qwen3.5:4b]
-    low: [qwen3.5:4b, deepseek-r1:8b]
+    default: [gemma4:e4b-it-q4_K_M, deepseek-r1:8b, qwen3.5:4b]
+    low: [[qwen3.5:4b, gemma4:e4b-it-q4_K_M], deepseek-r1:8b]
   coding:
     default: [qwen2.5-coder:7b, qwen3.5:4b]
   medical:
     default: [MedAIBase/MedGemma1.5:4b-it-q8_0, qwen3.5:4b]
 
 # Tried in this order when no model listed for the category is installed.
-last_resort: [qwen3.5:4b, deepseek-r1:8b, qwen2.5-coder:7b]
+last_resort: [qwen3.5:4b, gemma4:e4b-it-q4_K_M, deepseek-r1:8b, qwen2.5-coder:7b]

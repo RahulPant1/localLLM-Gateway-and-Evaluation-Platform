@@ -20,11 +20,12 @@ It runs [Ollama](https://ollama.com) models, stores every prompt and answer in S
 
 ## What the first test found
 
-28 prompts run on four local models and judged blind (details and limits in [docs/RESULTS.md](docs/RESULTS.md)):
+28 prompts run on five local models and judged blind (details and limits in [docs/RESULTS.md](docs/RESULTS.md)):
 
 | Model | Overall (0 to 10) | Median time |
 |---|---|---|
 | `qwen3.5:4b` | **9.55** | 16.7 s |
+| `gemma4:e4b` | 9.35 | 5.7 s |
 | `deepseek-r1:8b` | 8.93 | 13.1 s |
 | `MedGemma1.5:4b` | 8.81 | 2.6 s |
 | `qwen2.5-coder:7b` | 8.77 | 2.0 s |
@@ -32,7 +33,17 @@ It runs [Ollama](https://ollama.com) models, stores every prompt and answer in S
 - The 4B general model beat the 7B to 8B specialists overall. A specialist led only in coding (narrowly) and reasoning (on two prompts).
 - The medical model did not beat the general model on medical text (four prompts).
 - With "thinking" on, one model spent its entire context window reasoning on 2 of 28 prompts and returned nothing. The app now flags this and offers a rerun without thinking.
-- The router **matched the best single model (9.54 against 9.55) but did not beat it**.
+- The router **matched the best single model (9.54 against 9.55) but did not beat it** (measured on the first four models).
+- `gemma4:e4b`, added later with one click, came second at a third of the leader's time and led on reasoning, so the routing table now sends reasoning prompts to it.
+
+**Function calling** (40 BFCL cases, scored automatically):
+
+| Model | Correct calls | Sent as a real tool call |
+|---|---|---|
+| `gemma4:e4b` | **37 / 40** | all |
+| `qwen3.5:4b` | 36 / 40 | all |
+| `qwen2.5-coder:7b` | 30 / 40 | 1 of 30 (writes JSON text instead) |
+| `deepseek-r1:8b` | 10 / 40 | never calls a tool |
 
 This is a small, single-judge, author-written test; treat it as a worked example of the method, not a benchmark.
 
@@ -44,6 +55,8 @@ This is a small, single-judge, author-written test; treat it as a worked example
 - **Task labels:** the judge also labels each prompt with a task type and domain from fixed lists based on public benchmark families, so results show which model suits which kind of task.
 - **Overview screen:** routing shares, throughput, per-model and per-task scores, and a check of the router's picks against the judged scores.
 - **OpenAI-compatible endpoint** at `/v1` with streaming, so editors and chat apps can use the local models through the router (model name `auto`).
+- **Tool-use tests:** 40 function-calling cases from the Berkeley Function Calling Leaderboard (one call, choosing among functions, parallel calls, and knowing when no function fits), scored automatically with no judge.
+- **Model lineup:** add a newly installed model to every existing batch and tool-use test with one click, or hide a model and its results everywhere without deleting anything.
 - **Follow-up chat** from any answer, with a context-window meter.
 - **Guardrails for small machines:** a memory guard (unloads the model before Ollama's prompt cache exhausts RAM), a queue that runs one generation at a time, and detection of answers lost to thinking.
 
@@ -112,17 +125,17 @@ The tests run against a fake model provider. CI runs lint, the backend tests and
 backend/src/llm_gateway/   API, runner, queue, SQLite store, routing/, evaluation, OpenAI endpoint
 backend/tests/             unit and API tests with a fake provider
 backend/scripts/           swap-time measurement, router reports, command-line evaluation tools
-config/                    models.yaml (routing table), rubric.yaml, judge_prompt.md
-frontend/src/              React UI (Overview, Workspace, Batch runs, History, Evaluate)
+config/                    models.yaml (routing table), rubric.yaml, judge_prompt.md, tool_suites/
+frontend/src/              React UI (Overview, Workspace, Batch runs, Tool use, History, Evaluate, Models)
 docs/                      USAGE, ARCHITECTURE, RESULTS, SWAP_TIMES, sample prompts
 .claude/commands/          /evaluate-batch for Claude Code
 ```
 
 ## Limitations
 
-- Tested only on one machine (RTX 4060 8 GB, WSL2 with 6 GB RAM) and with four models.
+- Tested only on one machine (RTX 4060 8 GB, WSL2 with 6 to 9 GB RAM) and with five models.
 - One generation runs at a time, because the GPU holds one model. A batch and an editor assistant share the queue.
-- The `/v1` endpoint does not support function calling or images, and has no authentication; it is meant for `localhost`.
+- The `/v1` endpoint does not pass function calls through yet, and does not support images, and has no authentication; it is meant for `localhost`.
 - Results rest on 28 prompts and one judge. Judge agreement and human spot checks have not been done.
 - The in-app Claude API judge, human review of scores and a learned routing policy are not built.
 

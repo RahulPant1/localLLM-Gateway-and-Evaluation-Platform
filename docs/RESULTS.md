@@ -5,7 +5,7 @@ What was measured, how, and what it does and does not show. Numbers come from on
 ## Setup
 
 - **Machine:** laptop with an NVIDIA RTX 4060 (8 GB VRAM), WSL2 Ubuntu with 6 GB RAM and no swap. Ollama 0.40.3. One model fits in VRAM at a time.
-- **Models:** `qwen3.5:4b`, `qwen2.5-coder:7b`, `deepseek-r1:8b`, `MedAIBase/MedGemma1.5:4b-it-q8_0`, and later `gemma4:e4b` (Q4_K_M, 6.6 GB), added with the Models tab's **Run all tests**. `qwen3.5:4b`, `deepseek-r1:8b` and `gemma4:e4b` can think before answering, and thinking was on. Context window 8192 tokens (4096 for MedGemma).
+- **Models:** `qwen3.5:4b`, `qwen2.5-coder:7b`, `deepseek-r1:8b`, `MedAIBase/MedGemma1.5:4b-it-q8_0`, and later `gemma4:e4b` (Q4_K_M, 6.6 GB), added with **Run all tests** in Tests → Models. `qwen3.5:4b`, `deepseek-r1:8b` and `gemma4:e4b` can think before answering, and thinking was on. Context window 8192 tokens (4096 for MedGemma).
 - **Prompts:** [sample_batch_prompts.txt](sample_batch_prompts.txt), 28 short prompts written by the author: general knowledge, classification, extraction, structured output (JSON, YAML, table), maths, reasoning, coding, and a few medical-text tasks (all fictional). Each prompt ran once on each model: 112 answers from the first four models, then 28 from `gemma4:e4b`.
 - **Judge:** Claude, through Claude Code (`/evaluate-batch`), model Claude Fable 5.2. The judge saw the answers without model names, in random order, against the fixed rubric in [`config/rubric.yaml`](../config/rubric.yaml): correctness, relevance, completeness and instruction adherence, each 0 to 10 (groundedness was not applicable). The overall score is the plain mean of those four, computed by the app, not by the judge. The judge also labelled each prompt with a task type and a domain from the fixed lists in `backend/src/llm_gateway/taxonomy.py`, which follow the task families used by public benchmarks.
 - **The fifth model was judged later, by a different Claude model.** The first 112 answers were judged by Claude Fable 5.2; the 28 `gemma4:e4b` answers by Claude Opus 5.5, with the same rubric, instructions and blind export, and the task labels already given to each prompt. Compare `gemma4:e4b` with the others with that in mind.
@@ -100,8 +100,8 @@ Can each model call functions correctly? 40 cases sampled from the Berkeley Func
 
 ## Reproduce
 
-1. Start the app ([USAGE.md](USAGE.md)) with the models installed. A model installed later can be added to every existing test with **Run all tests** in the **Models** tab.
-2. Paste `docs/sample_batch_prompts.txt` into **Batch runs** and run it on all models.
+1. Start the app ([USAGE.md](USAGE.md)) with the models installed. A model installed later can be added to every existing test with **Run all tests** in **Tests → Models**.
+2. Paste `docs/sample_batch_prompts.txt` into **Tests → Batches** (New batch) and run it on all models.
 3. Judge it in the **Evaluate** tab (copy the package into any chat model and paste the JSON reply back), or run `/evaluate-batch` in Claude Code. See the rubric in `config/rubric.yaml`.
 4. Read the tables in the **Overview** tab.
-5. For function calling, open **Tool use**, tick the models and run the 40 cases. Scoring is immediate.
+5. For function calling, open **Tests → Tool use**, open **New tool-use run**, tick the models and run the 40 cases. Scoring is immediate.

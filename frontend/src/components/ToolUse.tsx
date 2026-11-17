@@ -10,6 +10,7 @@ import {
 } from "../api";
 import { heat, modelLabel, percent, pretty, seconds, snippet, when } from "../format";
 import { usePolling } from "../hooks";
+import { ModelPicker } from "./ModelPicker";
 
 const ratio = (t: Tally) => {
   const done = t.passed + t.wrong;
@@ -83,6 +84,7 @@ function ResultDetail({ result }: { result: ToolResult }) {
 
 function RunView({ run }: { run: ToolRunDetail }) {
   const [openId, setOpenId] = useState<string | null>(null);
+  const [allCases, setAllCases] = useState(false);
   const categories = useMemo(
     () => Array.from(new Set(run.results.map((r) => r.category))),
     [run.results],
@@ -160,7 +162,11 @@ function RunView({ run }: { run: ToolRunDetail }) {
         listed as errors and are not counted against the model.
       </p>
 
-      <h3 className="section-title">Every case</h3>
+      <label className="list-filter small">
+        <input type="checkbox" checked={allCases} onChange={(e) => setAllCases(e.target.checked)} /> Show every case (
+        {cases.length}), with what each model called
+      </label>
+      {allCases && (
       <div className="table-wrap">
         <table className="matrix">
           <thead>
@@ -202,6 +208,7 @@ function RunView({ run }: { run: ToolRunDetail }) {
           </tbody>
         </table>
       </div>
+      )}
       {open && <ResultDetail result={open} />}
     </>
   );
@@ -251,8 +258,6 @@ export function ToolUse({ models, modelsError }: Props) {
   const capable = (models ?? []).filter((m) => m.capabilities.includes("tools"));
   const unable = (models ?? []).filter((m) => !m.capabilities.includes("tools"));
 
-  const toggle = (name: string) =>
-    setSelectedModels((s) => (s.includes(name) ? s.filter((n) => n !== name) : [...s, name]));
 
   const start = async () => {
     if (!suite) return;
@@ -266,11 +271,30 @@ export function ToolUse({ models, modelsError }: Props) {
   };
 
   return (
-    <div className="overview">
+    <div className="overview overview-grid">
+      {runs.length > 0 && (
+        <section className="panel overview-panel">
+          <div className="panel-head">
+            <h2>Function calling</h2>
+            <select value={runId ?? ""} onChange={(e) => setRunId(e.target.value)}>
+              {runs.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name} · {r.models.map(modelLabel).join(", ")} · {when(r.created_at)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="muted small">
+            Can each model call functions correctly? Every case gives a request and function definitions; the model
+            must call the right one with the right arguments, or make no call when nothing fits. Scored automatically
+            against the accepted answers, with no judge.
+          </p>
+          {detail && detail.id === runId ? <RunView run={detail} /> : <p className="muted">Loading…</p>}
+        </section>
+      )}
       <section className="panel overview-panel">
-        <div className="panel-head">
-          <h2>Tool use</h2>
-        </div>
+        <details className="section" open={runs.length === 0}>
+          <summary>New tool-use run</summary>
         <p className="muted">
           Can the model call functions correctly? Each case gives the model a request and some
           function definitions. The model must pick the right function with the right arguments, or
@@ -287,25 +311,7 @@ export function ToolUse({ models, modelsError }: Props) {
           </p>
         )}
         {modelsError && <p className="error">{modelsError}</p>}
-        <div className="models">
-          {capable.map((m) => (
-            <label key={m.name} className={`model ${selectedModels.includes(m.name) ? "on" : ""}`}>
-              <input
-                type="checkbox"
-                checked={selectedModels.includes(m.name)}
-                onChange={() => toggle(m.name)}
-              />
-              <span className="model-body">
-                <span className="model-name">{modelLabel(m.name)}</span>
-                <span className="muted small">
-                  {[m.parameter_size, m.capabilities.includes("thinking") ? "can think" : null]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </span>
-              </span>
-            </label>
-          ))}
-        </div>
+        <ModelPicker models={capable} error={null} selected={selectedModels} onChange={setSelectedModels} />
         {unable.length > 0 && (
           <p className="muted small">
             Not offered, because Ollama reports no tool support: {unable.map((m) => modelLabel(m.name)).join(", ")}.
@@ -326,23 +332,9 @@ export function ToolUse({ models, modelsError }: Props) {
           </button>
         </p>
         {error && <p className="error">{error}</p>}
+        </details>
       </section>
 
-      {runs.length > 0 && (
-        <section className="panel overview-panel">
-          <div className="panel-head">
-            <h2>Results</h2>
-            <select value={runId ?? ""} onChange={(e) => setRunId(e.target.value)}>
-              {runs.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name} · {r.models.map(modelLabel).join(", ")} · {when(r.created_at)}
-                </option>
-              ))}
-            </select>
-          </div>
-          {detail && detail.id === runId ? <RunView run={detail} /> : <p className="muted">Loading…</p>}
-        </section>
-      )}
     </div>
   );
 }

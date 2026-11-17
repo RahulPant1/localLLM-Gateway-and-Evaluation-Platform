@@ -6,17 +6,21 @@ It runs [Ollama](https://ollama.com) models, stores every prompt and answer in S
 
 ## Screenshots
 
-![Overview: which model suits which task, and the model leaderboard](docs/images/overview-evaluation.png)
+![Overview: which model suits which task, the leaderboard and the router check](docs/images/overview.png)
 
-*Overview: average judge score per model and task type, then the leaderboard. This view counts every stored score, so its figures differ slightly from the 28-prompt table below.*
+*Overview: average judge score per task type, then the leaderboard (with the function-calling result), then whether the router's picks beat always using one model. All models are compared on the prompts every one of them has a score for.*
 
-![Overview: routing, local performance and requests](docs/images/overview-routing-performance.png)
+![Tests, Batches: one row per prompt, one column per model](docs/images/tests-batches.png)
 
-*Overview: which model the router picked, throughput on the GPU, and answer times per model.*
+*Tests → Batches: one row per prompt, one column per model; each cell shows the run time and the judge's score. A dot marks the router's pick.*
 
-![Batch runs: 28 prompts on four models](docs/images/batch-runs.png)
+![Tests, Tool use: function-calling results per model](docs/images/tests-tool-use.png)
 
-*Batch runs: one row per prompt, one column per model; each cell shows the run time and the judge's score.*
+*Tests → Tool use: 40 function-calling cases from the Berkeley Function Calling Leaderboard, scored automatically.*
+
+![Playground: a prompt, the router's decision and the answer](docs/images/playground.png)
+
+*Playground: one prompt, routed automatically or run on chosen models, with earlier prompts on the left.*
 
 ## What the first test found
 
@@ -50,10 +54,10 @@ This is a small, single-judge, author-written test; treat it as a worked example
 ## Features
 
 - **Run prompts** on one model, on several for comparison, or let the router choose.
-- **Batch runs:** many prompts across all models, grouped by model to limit the 5 to 19 s model swaps. Interrupted batches can be resumed.
+- **Batches:** many prompts across all models, grouped by model to limit the 5 to 19 s model swaps. Interrupted batches can be resumed.
 - **Blind evaluation:** export outputs without model names, have any judge score them on a five-dimension rubric, paste the JSON back. The app computes the weighted overall score so it is reproducible. A Claude Code command, `/evaluate-batch`, does the whole round trip.
 - **Task labels:** the judge also labels each prompt with a task type and domain from fixed lists based on public benchmark families, so results show which model suits which kind of task.
-- **Overview screen:** routing shares, throughput, per-model and per-task scores, and a check of the router's picks against the judged scores.
+- **Overview screen:** per-model and per-task scores (all models compared on the same prompts), function-calling results, a check of the router's picks against the judged scores, and routing and throughput details.
 - **OpenAI-compatible endpoint** at `/v1` with streaming and function calling, so editors, chat apps and agent frameworks can use the local models through the router (model name `auto`).
 - **Tool-use tests:** 40 function-calling cases from the Berkeley Function Calling Leaderboard (one call, choosing among functions, parallel calls, and knowing when no function fits), scored automatically with no judge.
 - **Model lineup:** add a newly installed model to every existing batch and tool-use test with one click, or hide a model and its results everywhere without deleting anything.
@@ -126,7 +130,7 @@ backend/src/llm_gateway/   API, runner, queue, SQLite store, routing/, evaluatio
 backend/tests/             unit and API tests with a fake provider
 backend/scripts/           swap-time measurement, router reports, command-line evaluation tools
 config/                    models.yaml (routing table), rubric.yaml, judge_prompt.md, tool_suites/
-frontend/src/              React UI (Overview, Workspace, Batch runs, Tool use, History, Evaluate, Models)
+frontend/src/              React UI (Overview, Playground, Tests, Evaluate)
 docs/                      USAGE, ARCHITECTURE, RESULTS, SWAP_TIMES, sample prompts
 .claude/commands/          /evaluate-batch for Claude Code
 ```

@@ -8,7 +8,7 @@ import {
   type ModelScores,
   RESUMABLE_CODES,
 } from "../api";
-import { meanScore, seconds, snippet, when } from "../format";
+import { meanScore, modelLabel, seconds, snippet, when } from "../format";
 import { usePolling } from "../hooks";
 import { ModelPicker } from "./ModelPicker";
 import { RequestView } from "./RequestView";
@@ -75,6 +75,10 @@ export function Batches({ models, modelsError, onEvaluate }: Props) {
   const chosen = selected ?? [];
 
   usePolling(async () => setBatches(await api.batches().catch(() => batches)), 3000, []);
+  // Open the newest batch, so the screen shows results instead of an empty panel.
+  useEffect(() => {
+    if (openId === null && batches.length > 0) setOpenId(batches[0].id);
+  }, [batches, openId]);
 
   const active = detail ? detail.counts.queued + detail.counts.running > 0 : false;
   const resumable = detail
@@ -117,8 +121,38 @@ export function Batches({ models, modelsError, onEvaluate }: Props) {
 
   return (
     <div className="columns">
+      <div className="stack">
       <section className="panel">
-        <h2>New batch</h2>
+        <h2>Batches</h2>
+        {batches.length === 0 && <p className="muted">No batches yet.</p>}
+        <ul className="list">
+          {batches.map((b) => {
+            const finished = b.counts.completed + b.counts.failed;
+            const all = finished + b.counts.queued + b.counts.running;
+            return (
+              <li key={b.id}>
+                <button
+                  className={`row ${openId === b.id ? "selected" : ""}`}
+                  onClick={() => {
+                    setOpenId(b.id);
+                    setCell(null);
+                  }}
+                >
+                  <span className="row-title">{b.name}</span>
+                  <span className="muted small">
+                    {when(b.created_at)} · {finished}/{all} runs
+                    {b.counts.failed > 0 && ` · ${b.counts.failed} failed`}
+                    {b.evaluated_count > 0 && ` · ${b.evaluated_count} evaluated`}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+      <section className="panel">
+        <details className="section" open={batches.length === 0}>
+          <summary>New batch</summary>
         <p className="muted small">
           Every prompt runs on every chosen model. All outputs are stored so they can be evaluated later.
         </p>
@@ -147,33 +181,9 @@ export function Batches({ models, modelsError, onEvaluate }: Props) {
         </button>
         {error && <p className="error">{error}</p>}
 
-        <h3>Batches</h3>
-        {batches.length === 0 && <p className="muted">No batches yet.</p>}
-        <ul className="list">
-          {batches.map((b) => {
-            const finished = b.counts.completed + b.counts.failed;
-            const all = finished + b.counts.queued + b.counts.running;
-            return (
-              <li key={b.id}>
-                <button
-                  className={`row ${openId === b.id ? "selected" : ""}`}
-                  onClick={() => {
-                    setOpenId(b.id);
-                    setCell(null);
-                  }}
-                >
-                  <span className="row-title">{b.name}</span>
-                  <span className="muted small">
-                    {when(b.created_at)} · {finished}/{all} runs
-                    {b.counts.failed > 0 && ` · ${b.counts.failed} failed`}
-                    {b.evaluated_count > 0 && ` · ${b.evaluated_count} evaluated`}
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        </details>
       </section>
+      </div>
 
       <section className="panel grow">
         <h2>{detail ? detail.name : "Batch results"}</h2>
@@ -219,7 +229,9 @@ export function Batches({ models, modelsError, onEvaluate }: Props) {
                   <tr>
                     <th>Prompt</th>
                     {detail.models.map((m) => (
-                      <th key={m}>{m}</th>
+                      <th key={m} title={m}>
+                        {modelLabel(m)}
+                      </th>
                     ))}
                   </tr>
                 </thead>
@@ -277,7 +289,7 @@ export function Batches({ models, modelsError, onEvaluate }: Props) {
                         .sort((a, b) => (b.overall ?? 0) - (a.overall ?? 0))
                         .map((s) => (
                           <tr key={`${s.model}|${s.judge}`}>
-                            <th>{s.model}</th>
+                            <th title={s.model}>{modelLabel(s.model)}</th>
                             <td>{s.judge}</td>
                             <td>{s.evaluated}</td>
                             <td>

@@ -111,12 +111,16 @@ def render_judge_package(
 
 
 def summarise_batch(store: Store, batch_id: str) -> list[ModelScores]:
-    """Mean scores per model and judge for a batch."""
+    """Mean scores per model and judge for a batch. When a judge scored an
+    answer more than once, only its latest score counts."""
     groups: dict[tuple[str, str], list] = defaultdict(list)
     for request in store.batch_requests(batch_id):
         for execution in request.executions:
-            for evaluation in execution.evaluations:
-                groups[(execution.model, evaluation.judge)].append(evaluation)
+            latest = {}
+            for evaluation in sorted(execution.evaluations, key=lambda v: v.created_at):
+                latest[evaluation.judge] = evaluation
+            for judge, evaluation in latest.items():
+                groups[(execution.model, judge)].append(evaluation)
 
     def mean(values: list[float]) -> float | None:
         return round(sum(values) / len(values), 2) if values else None

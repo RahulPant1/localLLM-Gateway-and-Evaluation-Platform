@@ -168,7 +168,7 @@ export function Models({ onEvaluate }: Props) {
   );
 
   return (
-    <div className="overview">
+    <div className="overview overview-grid">
       <section className="panel overview-panel">
         <div className="panel-head">
           <h2>Models</h2>

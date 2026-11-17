@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, requestActive, type ModelEntry, type RequestRecord } from "../api";
+import { snippet, when } from "../format";
 import { usePolling } from "../hooks";
 import { ModelPicker } from "./ModelPicker";
 import { RequestView } from "./RequestView";
@@ -10,7 +11,8 @@ interface Props {
   onEvaluate: (key: string) => void;
 }
 
-export function Workspace({ models, modelsError, onEvaluate }: Props) {
+/** One prompt on one or more models, with the earlier prompts beside it. */
+export function Playground({ models, modelsError, onEvaluate }: Props) {
   const [prompt, setPrompt] = useState("");
   const [system, setSystem] = useState("");
   const [source, setSource] = useState("");
@@ -20,6 +22,24 @@ export function Workspace({ models, modelsError, onEvaluate }: Props) {
   const [current, setCurrent] = useState<RequestRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  const [recent, setRecent] = useState<RequestRecord[] | null>(null);
+  const [showApi, setShowApi] = useState(false);
+
+  const anyActive = recent?.some(requestActive) ?? false;
+  usePolling(
+    async () => {
+      try {
+        setRecent(await api.requests());
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    },
+    anyActive ? 1500 : 10000,
+    [anyActive, current?.id],
+  );
+  const listed = (recent ?? []).filter((r) => showApi || r.source !== "api");
+  const apiCount = (recent ?? []).filter((r) => r.source === "api").length;
 
   const running = current ? requestActive(current) : false;
   usePolling(
@@ -58,6 +78,7 @@ export function Workspace({ models, modelsError, onEvaluate }: Props) {
   const ready = prompt.trim().length > 0 && (automatic || selected.length > 0) && !submitting;
   return (
     <div className="columns">
+      <div className="stack">
       <section className="panel">
         <h2>Request</h2>
         <textarea
@@ -113,12 +134,47 @@ export function Workspace({ models, modelsError, onEvaluate }: Props) {
         {error && <p className="error">{error}</p>}
       </section>
 
+      <section className="panel">
+        <h2>Recent prompts</h2>
+        {apiCount > 0 && (
+          <label className="list-filter small muted">
+            <input type="checkbox" checked={showApi} onChange={(e) => setShowApi(e.target.checked)} />
+            Include {apiCount} calls from other tools (API)
+          </label>
+        )}
+        {recent?.length === 0 && <p className="muted small">Nothing has been run yet.</p>}
+        <ul className="list">
+          {listed.slice(0, 40).map((r) => {
+            const failed = r.executions.filter((e) => e.status === "failed").length;
+            return (
+              <li key={r.id}>
+                <button className={`row ${current?.id === r.id ? "selected" : ""}`} onClick={() => setCurrent(r)}>
+                  <span className="row-title">{snippet(r.prompt, 70)}</span>
+                  <span className="muted small">
+                    {when(r.created_at)} · {r.source === "api" && "API · "}
+                    {r.routing_mode === "automatic" && "auto: "}
+                    {r.executions.map((e) => e.model).join(", ") || "no model"}
+                    {requestActive(r) && " · in progress"}
+                    {failed > 0 && ` · ${failed} failed`}
+                    {r.executions.some((e) => e.follow_up_count > 0) && " · conversation"}
+                    {r.executions.some((e) => e.evaluations.length > 0) && " · scored"}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        {listed.length > 40 && <p className="muted small">Showing the newest 40.</p>}
+        <p className="muted small">Batch prompts are under Tests → Batches.</p>
+      </section>
+      </div>
+
       <section className="panel grow">
-        <h2>Response</h2>
+        <h2>{current ? "Result" : "Response"}</h2>
         {current ? (
-          <RequestView request={current} showPrompt={false} onEvaluate={onEvaluate} />
+          <RequestView key={current.id} request={current} onEvaluate={onEvaluate} />
         ) : (
-          <p className="muted">Results appear here. They are saved, so a page refresh loses nothing; find them under History.</p>
+          <p className="muted">Results appear here. Everything is saved: pick an earlier prompt on the left to see it again.</p>
         )}
       </section>
     </div>

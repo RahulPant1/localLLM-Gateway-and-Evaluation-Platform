@@ -32,13 +32,13 @@ uv run pytest -m live     # real Ollama; loads a model
 
 ## Screens
 
-- **Overview**: totals for routing, local performance, requests and evaluation scores (see below).
-- **Workspace**: one prompt on one model, or on several to compare them.
-- **Batch runs**: many prompts on many models, with a results grid and export.
-- **Tool use**: can each model call functions correctly? Scored automatically (see below).
-- **History**: past single and comparison requests.
-- **Evaluate**: hand stored outputs to a judge and store the scores.
-- **Models**: the lineup. Add a new model to every existing test, or hide one (see below).
+- **Overview**: which model suits which task, the leaderboard (with the function-calling result) and the router check. Routing, speed and request totals are under **System details** (see below).
+- **Playground**: one prompt on one model, or on several to compare them, with your recent prompts on the left. Calls from other tools (API) are listed there when you tick "Include calls from other tools".
+- **Tests**: three views of the fixed tests.
+  - **Models**: the lineup. Add a new model to every existing test, or hide one (see below).
+  - **Batches**: many prompts on many models, with a results grid and export.
+  - **Tool use**: can each model call functions correctly? Scored automatically (see below).
+- **Evaluate**: hand stored outputs to a judge and store the scores. Batches are listed first; calls from other tools are left out unless you include them.
 
 ## Overview
 
@@ -47,25 +47,28 @@ The first tab summarises everything stored, for the last 7 days, 30 days or all 
 From top to bottom:
 
 - **Which model suits which task**: average judge score per model for each task type (or domain) the judge assigned, as a shaded grid with a ★ on the clear best in each row. Switch between task type and domain at the top right.
-- **Model leaderboard**: models ranked by overall score, with each rubric dimension, the number of scored answers and critical issues (answers the judge flagged as potentially harmful if trusted).
-- **Is the router worth it?**: the average score of the router's picks next to always using the best single model and the best model chosen for every prompt (a ceiling no router can reach in advance), and on how many prompts the router's pick was a top-scored model. It needs prompts where the pick and at least one other model were both scored, which in practice means a judged batch.
-- **Routing**: how many prompts the router decided, which model it picked how often, whether the quick rules or the classifier model decided, and how often the fallback was used. Batch prompts count too: the router's pick is recorded for each, although every model runs.
-- **Local performance**: tokens generated, speed, GPU time, and the share of answers that needed no model swap (a load under 1 second). The cloud cost line is an estimate: the same token counts at the list price of the model named in `.env` (`GATEWAY_CLOUD_COMPARE_MODEL` and the two `GATEWAY_CLOUD_*_PER_MTOK` prices; set both prices to 0 to hide it).
-- **Requests**: answers, typical (median) and slowest time, failures and tokens, per model or per task type. Manual requests have no task type and appear as "Not routed".
+- **Model leaderboard**: models ranked by overall score, with each rubric dimension, the number of prompts compared, critical issues (answers the judge flagged as potentially harmful if trusted) and the share of correct function calls from Tests → Tool use.
 
-To fill it with a meaningful sample, paste [sample_batch_prompts.txt](sample_batch_prompts.txt) (28 prompts, four per task type) into **Batch runs**, run it on all models, then judge it in the **Evaluate** tab.
+  **How the scores are counted.** Models are ranked only on prompts that every model has a score for, so a model judged on part of the prompts, or on an easier set, cannot look better or worse than it is; the note above the table says how many prompts that is and how many were left out. When a judge scores an answer again, its newer score replaces the older one. An answer scored by several judges counts once, with their scores averaged. The task grid uses the same prompts.
+- **Is the router worth it?**: the average score of the router's picks next to always using the best single model and the best model chosen for every prompt (a ceiling no router can reach in advance), and on how many prompts the router's pick was a top-scored model. It needs prompts where the pick and at least one other model were both scored, which in practice means a judged batch.
+- **System details** (collapsed; click to open):
+  - **Routing**: how many prompts the router decided, which model it picked how often, whether the quick rules or the classifier model decided, and how often the fallback was used. Batch prompts count too: the router's pick is recorded for each, although every model runs.
+  - **Local performance**: tokens generated, speed, GPU time, and the share of answers that needed no model swap (a load under 1 second). The cloud cost line is an estimate: the same token counts at the list price of the model named in `.env` (`GATEWAY_CLOUD_COMPARE_MODEL` and the two `GATEWAY_CLOUD_*_PER_MTOK` prices; set both prices to 0 to hide it).
+  - **Requests**: answers, typical (median) and slowest time, failures and tokens, per model or per task type. Manual requests have no task type and appear as "Not routed".
+
+To fill it with a meaningful sample, paste [sample_batch_prompts.txt](sample_batch_prompts.txt) (28 prompts, four per task type) into **Tests → Batches**, run it on all models, then judge it in the **Evaluate** tab.
 
 ## Adding or hiding a model
 
-The **Models** tab lists every installed model, and every model that has stored results, with how much of each test it has done: per batch, prompts answered, failed and judged; per tool-use run, cases done and the share correct.
+**Tests → Models** lists every installed model, and every model that has stored results, with how much of each test it has done: per batch, prompts answered, failed and judged; per tool-use run, cases done and the share correct.
 
-- **Run all tests** appears when a model has not done everything. It runs the model on every prompt of every existing batch, and every case of the latest tool-use run, that it has not done yet, and queues again its earlier failures caused by the environment (timeouts, low memory, interruptions). The new answers appear in the same batch grids and tool-use tables as the other models'. Batches that are still running are skipped; try again when they finish. Batches and tool-use runs take turns as whole jobs (one finishes before the next starts), so two of them never swap models on every call; single prompts from the Workspace or the `/v1` endpoint still get a turn in between. Models without tool support skip the tool-use tests.
+- **Run all tests** appears when a model has not done everything. It runs the model on every prompt of every existing batch, and every case of the latest tool-use run, that it has not done yet, and queues again its earlier failures caused by the environment (timeouts, low memory, interruptions). The new answers appear in the same batch grids and tool-use tables as the other models'. Batches that are still running are skipped; try again when they finish. Batches and tool-use runs take turns as whole jobs (one finishes before the next starts), so two of them never swap models on every call; single prompts from the Playground or the `/v1` endpoint still get a turn in between. Models without tool support skip the tool-use tests.
 - Tool-use cases are scored as soon as they finish. Batch answers need a judge: the tab shows how many are waiting, with a link to **Evaluate**. With Claude Code, `/evaluate-batch "<batch name>"` judges only what is not scored yet. Once the scores are stored, the Overview includes the new model.
 - **Hide** takes a model and all its results out of every screen, export and count, out of the model pickers and out of automatic routing. Nothing is deleted. Hidden models are listed at the bottom of the tab; **Restore** brings the model and every result back. Running all tests on a hidden model restores it first.
 
 ## Tool use (function calling)
 
-The **Tool use** tab tests whether a model can call functions. Each case gives the model a request and one or more function definitions (sent through Ollama's `tools` field, with no system prompt). The model must call the right function with the right arguments, call several when the request needs it, or make no call when nothing fits.
+**Tests → Tool use** tests whether a model can call functions. Each case gives the model a request and one or more function definitions (sent through Ollama's `tools` field, with no system prompt). The model must call the right function with the right arguments, call several when the request needs it, or make no call when nothing fits.
 
 The cases are a fixed sample of the Berkeley Function Calling Leaderboard (BFCL v3, Apache-2.0): 10 each of *simple* (one function), *multiple* (pick one of several), *parallel* (several calls at once) and *irrelevance* (no function fits). They are in `config/tool_suites/bfcl_v1.json`, built by `backend/scripts/build_toolcall_set.py` with seed 2026.
 
@@ -77,7 +80,7 @@ Thinking is off by default. Models that cannot switch it off (deepseek-r1) get 4
 
 ## Answers appear while they are written
 
-In the Workspace, a follow-up chat and an open batch result, the answer text grows on screen while the model generates it, refreshed about twice a second. A thinking model first shows "Thinking before it answers…"; its reasoning is under **Thinking**. Switching tabs or refreshing the page does not lose the answer: the model keeps running in the backend and the screen picks the text up again.
+In the Playground, a follow-up chat and an open batch result, the answer text grows on screen while the model generates it, refreshed about twice a second. A thinking model first shows "Thinking before it answers…"; its reasoning is under **Thinking**. Switching tabs or refreshing the page does not lose the answer: the model keeps running in the backend and the screen picks the text up again.
 
 ## When a model runs out of room while thinking
 
@@ -85,7 +88,7 @@ A thinking model can spend its whole context window on reasoning and leave nothi
 
 The failed card has a **Run again without thinking** button. It runs the same prompt on the same model with thinking off.
 
-- **Where the second attempt goes:** into the same run, next to the failed one, labelled "Attempt 2, thinking off". It does not create a separate entry in History. In a batch it stays in the batch, and the grid cell for that prompt and model then shows the second attempt.
+- **Where the second attempt goes:** into the same run, next to the failed one, labelled "Attempt 2, thinking off". It does not create a separate entry in the Playground's list. In a batch it stays in the batch, and the grid cell for that prompt and model then shows the second attempt.
 - **The failed attempt stays on record:** it still counts as one failed run in the batch totals and the Overview. So a batch can read "112 completed, 2 failed" when every prompt has an answer.
 - **Exports and evaluation use the answer that succeeded:** the batch export, the Evaluate tab's judge text and `/evaluate-batch` include completed answers only, so they contain the second attempt and never the failure.
 - **In a follow-up chat** the button is on the failed message, and the new attempt takes that message's place in the conversation.
@@ -93,7 +96,7 @@ The failed card has a **Run again without thinking** button. It runs the same pr
 
 ## Automatic routing
 
-In the Workspace, **Automatic** lets the gateway choose the model; **Manual** lets you pick one or several. With Automatic, the response shows a routing panel: the chosen model, task type, complexity, confidence, fallback and the reasons.
+In the Playground, **Automatic** lets the gateway choose the model; **Manual** lets you pick one or several. With Automatic, the response shows a routing panel: the chosen model, task type, complexity, confidence, fallback and the reasons.
 
 - What each model is used for is set in `config/models.yaml`. Edit it and restart the backend.
 - `GATEWAY_ROUTER_LLM=off` in `.env` makes routing use only the quick rules, never the classifier model.
@@ -111,7 +114,7 @@ In batch results, a dot (●) marks the model the router would have picked for e
 
 ## Follow-up chat
 
-Every completed answer has a **Continue chat with this model** button, in the Workspace, History and batch results. It opens a conversation in which the model sees all earlier messages. The meter under the conversation shows how much of the model's context window is used; at 90% the conversation cannot be continued and a new request is needed. Local models hold about 8,000 tokens (MedGemma about 4,000), far less than cloud assistants.
+Every completed answer has a **Continue chat with this model** button, in the Playground and in batch results. It opens a conversation in which the model sees all earlier messages. The meter under the conversation shows how much of the model's context window is used; at 90% the conversation cannot be continued and a new request is needed. Local models hold about 8,000 tokens (MedGemma about 4,000), far less than cloud assistants.
 
 ## Using the gateway from other tools
 
@@ -136,7 +139,7 @@ print(answer.choices[0].message.content, "- answered by", answer.model)
 
 In a tool's settings, choose the "OpenAI compatible" provider type, base URL `http://localhost:8000/v1`, model `auto`, and any text as the key.
 
-- **Stored:** every call appears in History marked "API", with the conversation the tool sent, and can be evaluated like any other run.
+- **Stored:** every call appears in the Playground's list marked "API" (tick "Include calls from other tools"), with the conversation the tool sent, and can be evaluated like any other run.
 - **Streaming:** with `"stream": true` the answer arrives piece by piece. If the tool disconnects, generation stops.
 - **Thinking is off by default** for these calls, so tools stay responsive. A request turns it on with `"reasoning_effort": "medium"` or `"high"`; `GATEWAY_API_THINK=true` in `.env` changes the default. Thinking text is streamed in a separate `reasoning_content` field, never in the answer.
 - **Conversations with `auto`** are routed by their first user message, so a conversation stays on one model.
@@ -161,12 +164,12 @@ final = client.chat.completions.create(model="auto", messages=messages, tools=to
 print(final.choices[0].message.content)
 ```
 
-- **Which models:** only models whose Ollama entry lists tool support (see the Models tab). Naming one that cannot call tools returns an error listing the ones that can. With `auto`, the router decides as usual, and if its choice cannot call tools the next suitable model that can is used; the routing explanation in History says so.
+- **Which models:** only models whose Ollama entry lists tool support (see Tests → Models). Naming one that cannot call tools returns an error listing the ones that can. With `auto`, the router decides as usual, and if its choice cannot call tools the next suitable model that can is used; the routing explanation stored with the call says so.
 - **Calls written as text are repaired.** Some models (`qwen2.5-coder:7b`) write the call as JSON in their answer instead of using the tool-call field. When every such call names a function you offered, the gateway returns it as a real tool call and sets `gateway.tool_calls_recovered_from_text` to `true`.
 - **Several calls at once** come back as several entries in `tool_calls`, as in OpenAI's API.
 - **Streaming** works, but a turn that may call tools is generated in full before it is sent, because call arguments are only usable once complete.
 - **`tool_choice`:** `"none"` sends no tools. Other values are accepted but not enforced: the model decides whether to call.
-- **Stored:** each turn appears in History. The prompt is your last user message; calls the model made appear as `[tool call] name({...})` lines, and earlier calls and results are kept as the request's source material.
+- **Stored:** each turn is stored like any other API call. The prompt is your last user message; calls the model made appear as `[tool call] name({...})` lines, and earlier calls and results are kept as the request's source material.
 
 ## Memory guard and resuming a batch
 
@@ -175,17 +178,17 @@ Ollama keeps a cache of every prompt the loaded model has seen, in system memory
 - **Guard:** before every run the gateway checks free memory. Below `GATEWAY_MIN_FREE_MEMORY_MB` (1500 by default) it unloads the loaded model, which releases the cache, and carries on; the model reloads in a few seconds. The status strip shows **RAM free** and how often memory was freed. If memory is critically low even with no model loaded, the run fails with `low_memory` and does not start.
 - **Resume:** a batch that was cut short (backend restarted, time limit hit, low memory) shows a **Resume N interrupted runs** button. It reruns only those; completed answers are kept.
 
-## Batch runs and later evaluation
+## Batches and later evaluation
 
-1. In **Batch runs**, type prompts separated by a line containing only `---`, pick models (all by default) and run. Work is grouped by model, so 10 prompts on 4 models cost 4 model loads.
+1. In **Tests → Batches**, open **New batch**, type prompts separated by a line containing only `---`, pick models (all by default) and run. Work is grouped by model, so 10 prompts on 4 models cost 4 model loads.
 2. Every output is stored in `data/gateway.db`, whether or not it is ever evaluated.
 3. Have a judge score the outputs (next section). Scores then appear in the batch grid, in a per-model table under it, and on each output.
 
 ## Evaluating from the browser
 
-Open the **Evaluate** tab. "Evaluate this run" in History or the Workspace, and "Evaluate this batch" in a batch, open it with that item ticked.
+Open the **Evaluate** tab. "Evaluate this run" in the Playground, and "Evaluate this batch" in a batch, open it with that item ticked.
 
-1. **Choose.** The tab lists runs and batches that still have unscored outputs. Tick the ones to judge, or use "Tick everything not fully scored". Fully scored items are not listed: they stay in History and Batch runs, where **Evaluate again** puts one back in this tab, for a second judge or a re-score.
+1. **Choose.** The tab lists runs and batches that still have unscored outputs. Tick the ones to judge, or use "Tick everything not fully scored". Fully scored items are not listed: they stay in the Playground and Tests → Batches, where **Evaluate again** puts one back in this tab, for a second judge or a re-score.
 2. **Copy.** The box holds one text with the judge instructions, the rubric and every ticked output. Click **Copy to clipboard**, paste it into Claude Code or any chat model, and send it. Model names are hidden unless you untick the box. A tick box leaves out outputs a named judge has already scored.
 3. **Paste back.** Paste the JSON reply into the second box and click **Store scores**. Surrounding text or a code fence is fine.
 

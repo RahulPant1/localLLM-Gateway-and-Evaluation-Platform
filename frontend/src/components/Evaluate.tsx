@@ -80,6 +80,8 @@ export function Evaluate({ selected, onSelect }: Props) {
   const [taxonomy, setTaxonomy] = useState<Taxonomy | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
+  // Calls from other tools are mostly tests and one-offs; listed only on request.
+  const [showApi, setShowApi] = useState(false);
   // Set after scores are stored: the next reload unticks whatever is now fully scored.
   const pruneAfterLoad = useRef(false);
   const selectedRef = useRef(selected);
@@ -112,17 +114,21 @@ export function Evaluate({ selected, onSelect }: Props) {
       .catch(() => undefined);
   }, []);
 
-  // Fully scored items live in History and Batch runs. They show here only
+  // Fully scored items live in the Playground and Tests → Batches. They show here only
   // when sent back with "Evaluate again", which ticks them.
   const waiting = (row: Row) => !fullyScored(row) || selected.includes(row.key);
   const allRows = [...requests.map(requestRow), ...batches.map(batchRow)];
-  const runRows = requests.map(requestRow).filter(waiting);
+  const apiKeys = new Set(requests.filter((r) => r.source === "api").map((r) => `r:${r.id}`));
+  const runRows = requests
+    .map(requestRow)
+    .filter(waiting)
+    .filter((row) => showApi || !apiKeys.has(row.key) || selected.includes(row.key));
+  const apiWaiting = requests.map(requestRow).filter(waiting).filter((row) => apiKeys.has(row.key)).length;
   const batchRows = batches.map(batchRow).filter(waiting);
-  const all = [...runRows, ...batchRows];
-  const hidden = allRows.length - all.length;
+  const hidden = allRows.filter((row) => !waiting(row)).length;
   const toggle = (key: string) =>
     onSelect(selected.includes(key) ? selected.filter((k) => k !== key) : [...selected, key]);
-  const unscored = all.filter((row) => row.outputs > 0 && row.scored < row.outputs).map((row) => row.key);
+  const unscored = [...batchRows, ...runRows].filter((row) => row.outputs > 0 && row.scored < row.outputs).map((row) => row.key);
 
   return (
     <div className="columns">
@@ -142,25 +148,31 @@ export function Evaluate({ selected, onSelect }: Props) {
         </div>
         {error && <p className="error">{error}</p>}
 
-        <span className="label">History runs</span>
-        {runRows.length === 0 ? (
-          <p className="muted small">
-            {requests.length === 0 ? "No runs yet. Run a prompt in the Workspace first." : "No runs waiting for scores."}
-          </p>
-        ) : (
-          <RowList rows={runRows} selected={selected} toggle={toggle} />
-        )}
-
-        <span className="label spaced">Batches</span>
+        <span className="label">Batches</span>
         {batchRows.length === 0 ? (
           <p className="muted small">{batches.length === 0 ? "No batches yet." : "No batches waiting for scores."}</p>
         ) : (
           <RowList rows={batchRows} selected={selected} toggle={toggle} />
         )}
+
+        <span className="label spaced">Single prompts</span>
+        {apiWaiting > 0 && (
+          <label className="list-filter small muted">
+            <input type="checkbox" checked={showApi} onChange={(e) => setShowApi(e.target.checked)} />
+            Include {apiWaiting} calls from other tools (API)
+          </label>
+        )}
+        {runRows.length === 0 ? (
+          <p className="muted small">
+            {requests.length === 0 ? "Nothing yet. Run a prompt in the Playground first." : "None waiting for scores."}
+          </p>
+        ) : (
+          <RowList rows={runRows} selected={selected} toggle={toggle} />
+        )}
         {hidden > 0 && (
           <p className="muted small">
-            {hidden} fully scored {hidden === 1 ? "item is" : "items are"} not listed. To judge one again, open it in
-            History or Batch runs and choose <strong>Evaluate again</strong>.
+            {hidden} fully scored {hidden === 1 ? "item is" : "items are"} not listed. To judge one again, open it in the
+            Playground or Tests → Batches and choose <strong>Evaluate again</strong>.
           </p>
         )}
       </section>

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, type GroupRow, type Overview as OverviewData } from "../api";
+import { api, type GroupRow, type Overview as OverviewData, type ToolRunSummary } from "../api";
 import {
   CATEGORY_TEXT,
   DECIDED_BY_TEXT,
@@ -357,7 +357,7 @@ function TaskPanel({ data }: { data: OverviewData }) {
             <span className="muted small">
               ★ = clear best in that row (a tie has no star).
               {!categorised &&
-                " These scores were stored before judges were asked for task types: use Evaluate again in History to have them categorised."}
+                " These scores were stored before judges were asked for task types: use Evaluate again on the batch or prompt to have them categorised."}
               {categorised && " With only a few prompts per row, read the star as a hint, not a result."}
             </span>
           </div>
@@ -376,7 +376,7 @@ function ComparisonBasis({ data }: { data: OverviewData }) {
     return (
       <p className="error small">
         No prompt has scores for every model yet, so each model is scored on its own prompts and the rows are not
-        comparable. Judge the missing answers (see the Models tab) to compare them.
+        comparable. Judge the missing answers (see Tests → Models) to compare them.
       </p>
     );
   return (
@@ -391,7 +391,21 @@ function ComparisonBasis({ data }: { data: OverviewData }) {
 }
 
 /** Models ranked by overall score, with each rubric dimension. */
-function LeaderboardPanel({ data }: { data: OverviewData }) {
+/** model -> correct tool calls in the newest tool-use run that included it. */
+type ToolScores = Map<string, { passed: number; done: number }>;
+
+function toolScores(runs: ToolRunSummary[]): ToolScores {
+  const scores: ToolScores = new Map();
+  // Runs come newest first; the first run that has a model wins.
+  for (const run of runs)
+    for (const m of run.per_model) {
+      const done = m.passed + m.wrong;
+      if (done > 0 && !scores.has(m.model)) scores.set(m.model, { passed: m.passed, done });
+    }
+  return scores;
+}
+
+function LeaderboardPanel({ data, tools }: { data: OverviewData; tools: ToolScores }) {
   const e = data.evaluation;
   if (e.by_model.length === 0) return null;
   // Groundedness is only scored when a prompt has source material; hide the column otherwise.
@@ -418,6 +432,11 @@ function LeaderboardPanel({ data }: { data: OverviewData }) {
               ))}
               <th className="num" title="Prompts this row is computed from">Prompts</th>
               <th className="num">Critical issues</th>
+              {tools.size > 0 && (
+                <th className="num" title="Correct function calls in the Tool use tests, scored automatically">
+                  Tool calls
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -451,6 +470,20 @@ function LeaderboardPanel({ data }: { data: OverviewData }) {
                 <td className="num">
                   {row.critical_issues > 0 ? <span className="pill bad">{row.critical_issues}</span> : "0"}
                 </td>
+                {tools.size > 0 && (
+                  <td className="num">
+                    {(() => {
+                      const t = tools.get(row.model);
+                      return t ? (
+                        <span title={`${t.passed} of ${t.done} correct`}>{percent(t.passed / t.done)}</span>
+                      ) : (
+                        <span className="muted" title="Not tested, or no tool support">
+                          -
+                        </span>
+                      );
+                    })()}
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -508,11 +541,13 @@ export function Overview() {
   const [days, setDays] = useState<number | null>(null);
   const [data, setData] = useState<OverviewData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [tools, setTools] = useState<ToolScores>(new Map());
 
   usePolling(
     async () => {
       try {
         setData(await api.overview(days));
+        setTools(toolScores(await api.toolRuns().catch(() => [])));
         setError(null);
       } catch (e) {
         setError((e as Error).message);
@@ -542,11 +577,16 @@ export function Overview() {
       {data && (
         <div className="overview-grid">
           <TaskPanel data={data} />
-          <LeaderboardPanel data={data} />
+          <LeaderboardPanel data={data} tools={tools} />
           <RouterCheckPanel data={data} />
-          <RoutingPanel data={data} />
-          <PerformancePanel data={data} />
-          <RequestsPanel data={data} />
+          <details className="system-details">
+            <summary>System details: routing, speed and requests</summary>
+            <div className="overview-grid">
+              <RoutingPanel data={data} />
+              <PerformancePanel data={data} />
+              <RequestsPanel data={data} />
+            </div>
+          </details>
         </div>
       )}
       {!data && !error && <p className="muted">Loading…</p>}

@@ -148,6 +148,13 @@ def test_scores_endpoint_gives_means_per_model_and_judge(client):
     assert rows["small:1b"]["critical_issues"] == 1
     assert client.get("/api/batches/nope/scores").status_code == 404
 
+    # The same judge scores one answer again: the new score replaces the old one.
+    again = dict(evaluations[0], scores=SCORES | {"correctness": 6}, critical_issues=[])
+    client.post("/api/evaluations", json={"evaluations": [again]})
+    rows = {r["model"]: r for r in client.get(f"/api/batches/{batch['id']}/scores").json()}
+    rescored = next(r for r in rows.values() if r["evaluated"] == 2 and r["critical_issues"] == 0)
+    assert rescored["evaluated"] == 2
+
 
 def package(client, **body):
     return client.post("/api/judge-package", json=body)

@@ -194,7 +194,7 @@ Caveat: Claude Code judging is only as blind as the judge's discipline. The same
 
 ## OpenAI-compatible endpoint (2026-11-15)
 
-- `openai_api.py`: `POST /v1/chat/completions` and `GET /v1/models`. A call becomes an ordinary stored request (`source = 'api'`), run by the same Runner and queue, so History, evaluation and the Overview cover it with no extra code.
+- `openai_api.py`: `POST /v1/chat/completions` and `GET /v1/models`. A call becomes an ordinary stored request (`source = 'api'`), run by the same Runner and queue, so the Playground list, evaluation and the Overview cover it with no extra code.
 - `openai_tools.py`: the function-calling path of `/v1`. A request with `tools` (or tool messages) is converted to Ollama's message format, sent to a tool-capable model through the queue's `run_tool_turn`, and stored as an ordinary request whose answer lists the calls. With `auto`, a routed model without tool support is swapped for the next one that has it. Calls a model wrote as JSON text are converted when they name an offered function.
 - API clients send the whole conversation each time, so the earlier turns are stored on the request (`requests.history`, migration 5) instead of through `parent_execution_id`. Migration 5 also adds `source` and `temperature`.
 - **Streaming:** `ModelProvider.generate` takes an optional `on_delta` callback; with it the Ollama provider reads `/api/chat` line by line. The Runner publishes `start`, `delta` and `end` events to a per-request queue that the HTTP handler turns into server-sent events. Requests made in the app poll for the growing text (next point).

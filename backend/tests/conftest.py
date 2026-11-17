@@ -56,6 +56,7 @@ class FakeProvider(ModelProvider):
         # Tool-calling: what the fake model "calls" for a user message (default: nothing).
         self.tool_calls_for: dict[str, list[ToolCall]] = {}
         self.chat_messages: list[list[dict]] = []
+        self.chat_tools: list[list[dict]] = []
         # Every generation in order: ("generate" | "chat", model).
         self.timeline: list[tuple[str, str]] = []
         # What the fake model writes as its answer text for a user message.
@@ -85,6 +86,7 @@ class FakeProvider(ModelProvider):
         if self.error:
             raise self.error
         self.chat_messages.append(messages)
+        self.chat_tools.append(tools)
         self.timeline.append(("chat", model.name))
         await asyncio.sleep(self.delay)
         return ToolTurn(

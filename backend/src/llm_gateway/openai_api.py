@@ -6,12 +6,15 @@ Every call is stored like a request made in the app, so it appears in
 History and can be evaluated.
 
 Supported: text messages, streaming, max_tokens, temperature,
-reasoning_effort. Ignored: tools, images, stop, top_p, response_format, n.
+reasoning_effort, and function calling (`tools`, tool calls and tool
+results; see openai_tools.py). Ignored: images, stop, top_p,
+response_format, n, and a `tool_choice` other than "none".
 """
 
 import asyncio
 import json
 import time
+import uuid
 from collections.abc import AsyncIterator
 from typing import Literal
 
@@ -19,6 +22,14 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from llm_gateway.openai_tools import (
+    ToolRequestError,
+    finish_reason,
+    openai_tool_calls,
+    run_tool_turn,
+    usage,
+    uses_tools,
+)
 from llm_gateway.providers.base import ChatMessage, ModelNotFound, ProviderError
 from llm_gateway.schemas import Execution, PromptInput, RequestRecord
 
@@ -48,6 +59,10 @@ class Message(BaseModel):
     model_config = ConfigDict(extra="ignore")
     role: Literal["system", "developer", "user", "assistant", "tool"]
     content: str | list[Part] | None = None
+    # Assistant turns that called tools, and the results sent back for them.
+    tool_calls: list[dict] | None = None
+    tool_call_id: str | None = None
+    name: str | None = None
 
     def text(self) -> str:
         if isinstance(self.content, str):
@@ -72,6 +87,9 @@ class ChatCompletionRequest(BaseModel):
     max_completion_tokens: int | None = Field(default=None, gt=0)
     temperature: float | None = Field(default=None, ge=0, le=2)
     reasoning_effort: str | None = None
+    # Function definitions in OpenAI's format.
+    tools: list[dict] | None = None
+    tool_choice: str | dict | None = None
 
 
 def _error(status: int, message: str, code: str, kind: str = "invalid_request_error"):
@@ -149,7 +167,12 @@ async def list_models(request: Request) -> dict:
 async def chat_completions(body: ChatCompletionRequest, request: Request):
     state = request.app.state
     store, runner = state.store, state.runner
+    think = state.settings.api_think
+    if body.reasoning_effort:
+        think = body.reasoning_effort.lower() in ("medium", "high", "xhigh", "max")
     try:
+        if uses_tools(body):
+            return await _tool_completion(body, state, think)
         system, history, prompt = split_messages(body.messages)
     except ValueError as exc:
         return _error(400, str(exc), "unsupported_messages")
@@ -162,10 +185,6 @@ async def chat_completions(body: ChatCompletionRequest, request: Request):
             return _error(404, f"{exc}. Use 'auto' or a name from /v1/models.", exc.code)
         except ProviderError as exc:
             return _error(STATUS_FOR_CODE.get(exc.code, 500), str(exc), exc.code, "server_error")
-
-    think = state.settings.api_think
-    if body.reasoning_effort:
-        think = body.reasoning_effort.lower() in ("medium", "high", "xhigh", "max")
 
     record = store.create_request(
         PromptInput(prompt=prompt, system=system),
@@ -266,6 +285,94 @@ async def chat_completions(body: ChatCompletionRequest, request: Request):
             runner.unsubscribe(record.id)
             if not finished:
                 # The client went away: stop generating and free the GPU.
+                task.cancel()
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def _tool_error(exc: ToolRequestError) -> JSONResponse:
+    kind = "invalid_request_error" if exc.status < 500 else "server_error"
+    return _error(exc.status, str(exc), exc.code, kind)
+
+
+async def _tool_completion(body: ChatCompletionRequest, state, think: bool):
+    """A turn in which the model may call the client's functions."""
+    task = asyncio.create_task(run_tool_turn(state, body, think))
+    completion_id = f"chatcmpl-{uuid.uuid4().hex}"
+    created = int(time.time())
+
+    def gateway(outcome) -> dict:
+        info = _gateway_info(state.store.get_request(outcome.request_id))
+        info["tool_calls_recovered_from_text"] = outcome.recovered
+        return info
+
+    if not body.stream:
+        try:
+            outcome = await task
+        except ToolRequestError as exc:
+            return _tool_error(exc)
+        message: dict = {"role": "assistant", "content": outcome.content or None}
+        if outcome.calls:
+            message["tool_calls"] = openai_tool_calls(outcome)
+        return {
+            "id": completion_id,
+            "object": "chat.completion",
+            "created": created,
+            "model": outcome.model,
+            "choices": [{"index": 0, "message": message, "finish_reason": finish_reason(outcome)}],
+            "usage": usage(outcome),
+            "gateway": gateway(outcome),
+        }
+
+    include_usage = bool(body.stream_options and body.stream_options.include_usage)
+
+    async def stream() -> AsyncIterator[str]:
+        try:
+            while not task.done():
+                done, _ = await asyncio.wait({task}, timeout=KEEP_ALIVE_SECONDS)
+                if not done:
+                    yield ": keep-alive\n\n"
+            try:
+                outcome = task.result()
+            except ToolRequestError as exc:
+                error = {"message": str(exc), "type": "server_error", "code": exc.code}
+                yield f"data: {json.dumps({'error': error})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
+            def chunk(delta: dict, finish: str | None = None, **extra) -> str:
+                data = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": outcome.model,
+                    "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+                    **extra,
+                }
+                return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+            yield chunk({"role": "assistant", "content": outcome.content or ""})
+            if outcome.calls:
+                yield chunk({"tool_calls": openai_tool_calls(outcome, with_index=True)})
+            yield chunk({}, finish_reason(outcome), gateway=gateway(outcome))
+            if include_usage:
+                final = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": outcome.model,
+                    "choices": [],
+                    "usage": usage(outcome),
+                }
+                yield f"data: {json.dumps(final)}\n\n"
+            yield "data: [DONE]\n\n"
+        finally:
+            if not task.done():
+                # The client went away: stop and free the GPU.
                 task.cancel()
 
     return StreamingResponse(

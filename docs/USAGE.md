@@ -140,8 +140,33 @@ In a tool's settings, choose the "OpenAI compatible" provider type, base URL `ht
 - **Streaming:** with `"stream": true` the answer arrives piece by piece. If the tool disconnects, generation stops.
 - **Thinking is off by default** for these calls, so tools stay responsive. A request turns it on with `"reasoning_effort": "medium"` or `"high"`; `GATEWAY_API_THINK=true` in `.env` changes the default. Thinking text is streamed in a separate `reasoning_content` field, never in the answer.
 - **Conversations with `auto`** are routed by their first user message, so a conversation stays on one model.
-- **Supported:** text messages, `stream`, `max_tokens`, `temperature`, `reasoning_effort`. **Ignored:** tools (function calling), `stop`, `top_p`, `response_format`. Images are rejected.
+- **Supported:** text messages, `stream`, `max_tokens`, `temperature`, `reasoning_effort`, and function calling (below). **Ignored:** `stop`, `top_p`, `response_format`. Images are rejected.
 - **One at a time:** a call waits its turn behind a running batch or another call. The gateway listens on this machine only.
+
+### Function calling
+
+Send `tools` in the OpenAI format and the model can ask your program to call them. Your program runs the function and sends the result back as a `tool` message; the gateway never runs anything itself.
+
+```python
+tools = [{"type": "function", "function": {
+    "name": "get_weather", "description": "Current weather for a city",
+    "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}}}]
+messages = [{"role": "user", "content": "What's the weather in Lisbon?"}]
+
+reply = client.chat.completions.create(model="auto", messages=messages, tools=tools)
+call = reply.choices[0].message.tool_calls[0]            # get_weather({"city": "Lisbon"})
+messages += [reply.choices[0].message,
+             {"role": "tool", "tool_call_id": call.id, "content": "18 C, light rain"}]
+final = client.chat.completions.create(model="auto", messages=messages, tools=tools)
+print(final.choices[0].message.content)
+```
+
+- **Which models:** only models whose Ollama entry lists tool support (see the Models tab). Naming one that cannot call tools returns an error listing the ones that can. With `auto`, the router decides as usual, and if its choice cannot call tools the next suitable model that can is used; the routing explanation in History says so.
+- **Calls written as text are repaired.** Some models (`qwen2.5-coder:7b`) write the call as JSON in their answer instead of using the tool-call field. When every such call names a function you offered, the gateway returns it as a real tool call and sets `gateway.tool_calls_recovered_from_text` to `true`.
+- **Several calls at once** come back as several entries in `tool_calls`, as in OpenAI's API.
+- **Streaming** works, but a turn that may call tools is generated in full before it is sent, because call arguments are only usable once complete.
+- **`tool_choice`:** `"none"` sends no tools. Other values are accepted but not enforced: the model decides whether to call.
+- **Stored:** each turn appears in History. The prompt is your last user message; calls the model made appear as `[tool call] name({...})` lines, and earlier calls and results are kept as the request's source material.
 
 ## Memory guard and resuming a batch
 

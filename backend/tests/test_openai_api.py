@@ -110,7 +110,6 @@ def test_unknown_model_and_unsupported_messages_are_rejected(client):
     for messages in (
         [{"role": "assistant", "content": "hi"}],
         [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "x"}}]}],
-        [{"role": "user", "content": "x"}, {"role": "tool", "content": "y", "tool_call_id": "1"}],
     ):
         response = ask(client, messages=messages)
         assert response.status_code == 400, messages

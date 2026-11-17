@@ -54,7 +54,7 @@ This is a small, single-judge, author-written test; treat it as a worked example
 - **Blind evaluation:** export outputs without model names, have any judge score them on a five-dimension rubric, paste the JSON back. The app computes the weighted overall score so it is reproducible. A Claude Code command, `/evaluate-batch`, does the whole round trip.
 - **Task labels:** the judge also labels each prompt with a task type and domain from fixed lists based on public benchmark families, so results show which model suits which kind of task.
 - **Overview screen:** routing shares, throughput, per-model and per-task scores, and a check of the router's picks against the judged scores.
-- **OpenAI-compatible endpoint** at `/v1` with streaming, so editors and chat apps can use the local models through the router (model name `auto`).
+- **OpenAI-compatible endpoint** at `/v1` with streaming and function calling, so editors, chat apps and agent frameworks can use the local models through the router (model name `auto`).
 - **Tool-use tests:** 40 function-calling cases from the Berkeley Function Calling Leaderboard (one call, choosing among functions, parallel calls, and knowing when no function fits), scored automatically with no judge.
 - **Model lineup:** add a newly installed model to every existing batch and tool-use test with one click, or hide a model and its results everywhere without deleting anything.
 - **Follow-up chat** from any answer, with a context-window meter.
@@ -135,7 +135,7 @@ docs/                      USAGE, ARCHITECTURE, RESULTS, SWAP_TIMES, sample prom
 
 - Tested only on one machine (RTX 4060 8 GB, WSL2 with 6 to 9 GB RAM) and with five models.
 - One generation runs at a time, because the GPU holds one model. A batch and an editor assistant share the queue.
-- The `/v1` endpoint does not pass function calls through yet, and does not support images, and has no authentication; it is meant for `localhost`.
+- The `/v1` endpoint does not support images and has no authentication; it is meant for `localhost`.
 - Results rest on 28 prompts and one judge. Judge agreement and human spot checks have not been done.
 - The in-app Claude API judge, human review of scores and a learned routing policy are not built.
 

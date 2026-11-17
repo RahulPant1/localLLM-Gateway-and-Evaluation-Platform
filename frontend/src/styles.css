@@ -350,3 +350,6 @@ ol.trace > li { margin-bottom: 10px; }
 .prompt-preview li summary { cursor: pointer; font-size: 13px; overflow-wrap: anywhere; }
 .prompt-preview pre { white-space: pre-wrap; font-size: 12px; margin: 4px 0; }
 .prompt-preview .num { min-width: 22px; padding-top: 1px; }
+.chip.off { opacity: 0.55; cursor: help; }
+details.agent-steps { margin: 6px 0 8px; }
+details.agent-steps > summary { cursor: pointer; font-size: 13px; color: var(--muted); }

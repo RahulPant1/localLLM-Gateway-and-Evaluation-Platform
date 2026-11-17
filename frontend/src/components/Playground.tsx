@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { api, requestActive, type ModelEntry, type RequestRecord } from "../api";
-import { snippet, when } from "../format";
+import { api, type Connector, requestActive, type ModelEntry, type RequestRecord } from "../api";
+import { modelLabel, snippet, when } from "../format";
 import { usePolling } from "../hooks";
 import { ModelPicker } from "./ModelPicker";
 import { RequestView } from "./RequestView";
@@ -23,6 +23,10 @@ export function Playground({ models, modelsError, onEvaluate }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const [connectors, setConnectors] = useState<Connector[]>([]);
+  const [apps, setApps] = useState<string[]>([]);
+  const [agentModel, setAgentModel] = useState("");
+  const [agentThink, setAgentThink] = useState(false);
   const [recent, setRecent] = useState<RequestRecord[] | null>(null);
   const [showApi, setShowApi] = useState(false);
 
@@ -38,6 +42,16 @@ export function Playground({ models, modelsError, onEvaluate }: Props) {
     anyActive ? 1500 : 10000,
     [anyActive, current?.id],
   );
+  usePolling(async () => setConnectors(await api.connectors().catch(() => [])), 30000, []);
+  const agentMode = apps.length > 0;
+  const toolModels = (models ?? []).filter((m) => m.capabilities.includes("tools"));
+  // The best agent in the tests so far, if installed; otherwise the first model with tools.
+  const defaultAgent = (["qwen3.5:4b", "gemma4:e4b-it-q4_K_M"].find((n) => toolModels.some((m) => m.name === n)) ??
+    toolModels[0]?.name ??
+    "") as string;
+  const chosenAgent = agentModel || defaultAgent;
+  const toggleApp = (name: string) => setApps((a) => (a.includes(name) ? a.filter((x) => x !== name) : [...a, name]));
+
   const listed = (recent ?? []).filter((r) => showApi || r.source !== "api");
   const apiCount = (recent ?? []).filter((r) => r.source === "api").length;
 
@@ -59,6 +73,10 @@ export function Playground({ models, modelsError, onEvaluate }: Props) {
     setSubmitting(true);
     setError(null);
     try {
+      if (agentMode) {
+        setCurrent(await api.startAgentRun({ prompt, model: chosenAgent, apps, think: agentThink }));
+        return;
+      }
       setCurrent(
         await api.createRequest({
           prompt,
@@ -75,7 +93,10 @@ export function Playground({ models, modelsError, onEvaluate }: Props) {
     }
   };
 
-  const ready = prompt.trim().length > 0 && (automatic || selected.length > 0) && !submitting;
+  const ready =
+    prompt.trim().length > 0 &&
+    (agentMode ? Boolean(chosenAgent) : automatic || selected.length > 0) &&
+    !submitting;
   return (
     <div className="columns">
       <div className="stack">
@@ -100,6 +121,49 @@ export function Playground({ models, modelsError, onEvaluate }: Props) {
           <textarea rows={5} value={source} onChange={(e) => setSource(e.target.value)} />
         </details>
 
+        <h3>Tools</h3>
+        <div className="chips">
+          {connectors.map((c) => (
+            <label
+              key={c.name}
+              className={`chip ${apps.includes(c.name) ? "on" : ""} ${c.available ? "" : "off"}`}
+              title={c.available ? `${c.detail}\nTools: ${c.tools.join(", ")}` : c.detail}
+            >
+              <input
+                type="checkbox"
+                disabled={!c.available}
+                checked={apps.includes(c.name)}
+                onChange={() => toggleApp(c.name)}
+              />
+              <span className="chip-name">{c.label}</span>
+              {!c.available && <span className="chip-meta">not set up</span>}
+            </label>
+          ))}
+        </div>
+        <p className="muted small">
+          {agentMode
+            ? "The model works as an agent: it calls the ticked tools, reads what they return, and answers. All tools are read-only; nothing is sent, written or deleted. Each step is shown with the answer."
+            : "Optional: let the model use real apps, read-only. Hover over one that is not set up to see how."}
+        </p>
+
+        {agentMode ? (
+          <>
+            <h3>Model</h3>
+            <select value={chosenAgent} onChange={(e) => setAgentModel(e.target.value)}>
+              {toolModels.map((m) => (
+                <option key={m.name} value={m.name}>
+                  {modelLabel(m.name)}
+                </option>
+              ))}
+            </select>
+            <p className="muted small">Only models that can call tools are listed.</p>
+            <label className="check">
+              <input type="checkbox" checked={agentThink} onChange={(e) => setAgentThink(e.target.checked)} />
+              Let the model think before each step (much slower)
+            </label>
+          </>
+        ) : (
+          <>
         <h3>Model</h3>
         <div className="segmented" role="group" aria-label="Model selection">
           <button className={automatic ? "on" : ""} onClick={() => setAutomatic(true)}>
@@ -127,9 +191,17 @@ export function Playground({ models, modelsError, onEvaluate }: Props) {
           <input type="checkbox" checked={thinking} onChange={(e) => setThinking(e.target.checked)} />
           Let thinking-capable models think first (slower, often better)
         </label>
+          </>
+        )}
 
         <button className="primary" disabled={!ready} onClick={submit}>
-          {automatic ? "Route and run" : selected.length > 1 ? `Run on ${selected.length} models` : "Run"}
+          {agentMode
+            ? `Run as agent on ${modelLabel(chosenAgent)}`
+            : automatic
+              ? "Route and run"
+              : selected.length > 1
+                ? `Run on ${selected.length} models`
+                : "Run"}
         </button>
         {error && <p className="error">{error}</p>}
       </section>
@@ -152,6 +224,7 @@ export function Playground({ models, modelsError, onEvaluate }: Props) {
                   <span className="row-title">{snippet(r.prompt, 70)}</span>
                   <span className="muted small">
                     {when(r.created_at)} · {r.source === "api" && "API · "}
+                    {r.source === "agent" && "agent · "}
                     {r.routing_mode === "automatic" && "auto: "}
                     {r.executions.map((e) => e.model).join(", ") || "no model"}
                     {requestActive(r) && " · in progress"}

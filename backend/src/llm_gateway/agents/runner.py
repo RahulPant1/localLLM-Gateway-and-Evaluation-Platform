@@ -9,23 +9,17 @@ models in between.
 
 import asyncio
 import logging
-import time
 
 from llm_gateway.agents.checks import evaluate
+from llm_gateway.agents.loop import run_loop
 from llm_gateway.agents.suites import AgentSuite, Scenario
 from llm_gateway.agents.world import World, tool_schemas
 from llm_gateway.catalog import ModelCatalog
 from llm_gateway.execution import ExecutionQueue
 from llm_gateway.providers.base import ModelProvider, ProviderError
 from llm_gateway.store import Store
-from llm_gateway.tooluse.checker import extract_text_calls
 
 logger = logging.getLogger(__name__)
-
-MAX_TOKENS = 1024
-MAX_TOKENS_THINKING = 4096
-# The same call with the same arguments this many times in a row ends the run.
-REPEAT_LIMIT = 3
 
 
 class AgentRunner:
@@ -90,85 +84,21 @@ class AgentRunner:
         self._store.mark_tool_running(result["id"], kind="agent")
         world = World(suite.world, scenario.world, scenario.apps)
         tools = tool_schemas(scenario.apps)
-        offered = {t["function"]["name"] for t in tools}
         messages: list[dict] = [
             {"role": "system", "content": suite.system_prompt},
             {"role": "user", "content": scenario.prompt},
         ]
-        trace: list[dict] = []
-        totals = {"tool_calls": 0, "invalid_calls": 0, "text_calls": 0}
-        tokens = {"prompt": 0, "output": 0}
-        waited = 0.0
-        answer, stop = "", "step_limit"
-        last_call, repeats = None, 0
-        started = time.perf_counter()
         try:
             model = await self._catalog.get(result["model"])
-            for step in range(scenario.max_steps):
-                turn, queue_wait_ms, execution_ms = await self._queue.run_tool_turn(
-                    messages,
-                    tools,
-                    model,
-                    think=run["think"],
-                    max_tokens=MAX_TOKENS_THINKING if model.supports_thinking else MAX_TOKENS,
-                    temperature=0,
-                )
-                waited += queue_wait_ms
-                tokens["prompt"] += turn.prompt_tokens or 0
-                tokens["output"] += turn.output_tokens or 0
-                calls, as_text = turn.tool_calls, False
-                if not calls:
-                    found = extract_text_calls(turn.content)
-                    if found and all(c.name in offered for c in found):
-                        calls, as_text = found, True
-                entry: dict = {
-                    "step": step + 1,
-                    "content": "" if as_text else turn.content,
-                    "thought": bool(turn.thinking),
-                    "calls": [],
-                    "ms": execution_ms,
-                    "calls_as_text": as_text,
-                }
-                trace.append(entry)
-                if not calls:
-                    answer = turn.content
-                    stop = "cut_off" if turn.done_reason == "length" else "answered"
-                    break
-                if as_text:
-                    totals["text_calls"] += len(calls)
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "content": entry["content"],
-                        "tool_calls": [
-                            {"function": {"name": c.name, "arguments": c.arguments}} for c in calls
-                        ],
-                    }
-                )
-                looping = False
-                for call in calls:
-                    outcome = world.call(call.name, call.arguments)
-                    totals["tool_calls"] += 1
-                    totals["invalid_calls"] += outcome.invalid
-                    entry["calls"].append(
-                        {
-                            "name": call.name,
-                            "arguments": call.arguments,
-                            "result": outcome.text,
-                            "invalid": outcome.invalid,
-                            "error": outcome.error,
-                        }
-                    )
-                    messages.append(
-                        {"role": "tool", "content": outcome.text, "tool_name": call.name}
-                    )
-                    key = (call.name, repr(sorted(call.arguments.items())))
-                    repeats = repeats + 1 if key == last_call else 1
-                    last_call = key
-                    looping = looping or repeats >= REPEAT_LIMIT
-                if looping:
-                    stop = "loop"
-                    break
+            loop = await run_loop(
+                self._queue,
+                model,
+                messages,
+                tools,
+                world.call,
+                think=run["think"],
+                max_steps=scenario.max_steps,
+            )
         except ProviderError as exc:
             self._store.fail_tool_result(result["id"], exc.code, str(exc), kind="agent")
             return
@@ -177,7 +107,7 @@ class AgentRunner:
             self._store.fail_tool_result(result["id"], "internal_error", str(exc), kind="agent")
             return
 
-        checks = [evaluate(check, world, answer) for check in scenario.checks]
+        checks = [evaluate(check, world, loop.answer) for check in scenario.checks]
         passed = sum(c.passed for c in checks)
         effects = {k: v for k, v in world.effects.items() if k != "calls" and v}
         self._store.finish_agent_result(
@@ -185,16 +115,16 @@ class AgentRunner:
             passed=passed == len(checks),
             score=round(passed / len(checks), 3) if checks else 0.0,
             checks=[c.__dict__ for c in checks],
-            trace=trace,
+            trace=loop.trace,
             effects=effects,
-            answer=answer,
-            stop_reason=stop,
-            steps=len(trace),
-            tool_calls=totals["tool_calls"],
-            invalid_calls=totals["invalid_calls"],
-            text_calls=totals["text_calls"],
-            prompt_tokens=tokens["prompt"],
-            output_tokens=tokens["output"],
-            queue_wait_ms=round(waited, 1),
-            execution_ms=round((time.perf_counter() - started) * 1000 - waited, 1),
+            answer=loop.answer,
+            stop_reason=loop.stop,
+            steps=len(loop.trace),
+            tool_calls=loop.tool_calls,
+            invalid_calls=loop.invalid_calls,
+            text_calls=loop.text_calls,
+            prompt_tokens=loop.prompt_tokens,
+            output_tokens=loop.output_tokens,
+            queue_wait_ms=loop.queue_wait_ms,
+            execution_ms=loop.execution_ms,
         )

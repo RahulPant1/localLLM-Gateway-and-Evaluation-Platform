@@ -16,7 +16,15 @@ interface Row {
   detail: string;
   outputs: number;
   scored: number;
+  // An agent run that read Gmail: the judge package would contain email text.
+  mailbox?: boolean;
 }
+
+const usedGmail = (r: RequestRecord) =>
+  r.executions.some((e) => {
+    const agent = (e.metrics as unknown as { agent?: { apps: string[] } } | null)?.agent;
+    return agent?.apps.includes("gmail") ?? false;
+  });
 
 function requestRow(r: RequestRecord): Row {
   const completed = r.executions.filter((e) => e.status === "completed");
@@ -26,6 +34,7 @@ function requestRow(r: RequestRecord): Row {
     detail: `${when(r.created_at)} · ${r.executions.map((e) => e.model).join(", ") || "no model"}`,
     outputs: completed.length,
     scored: completed.filter((e) => e.evaluations.length > 0).length,
+    mailbox: usedGmail(r),
   };
 }
 
@@ -55,6 +64,11 @@ function RowList({ rows, selected, toggle }: { rows: Row[]; selected: string[]; 
             />
             <span className="pick-body">
               <span className="row-title">{row.title}</span>
+              {row.mailbox && (
+                <span className="pill bad small" title="The judge package includes text from your Gmail. Only send it to a judge you trust with that.">
+                  contains Gmail data
+                </span>
+              )}
               <span className="muted small">
                 {row.detail} ·{" "}
                 {row.outputs === 0
@@ -128,7 +142,7 @@ export function Evaluate({ selected, onSelect }: Props) {
   const hidden = allRows.filter((row) => !waiting(row)).length;
   const toggle = (key: string) =>
     onSelect(selected.includes(key) ? selected.filter((k) => k !== key) : [...selected, key]);
-  const unscored = [...batchRows, ...runRows].filter((row) => row.outputs > 0 && row.scored < row.outputs).map((row) => row.key);
+  const unscored = [...batchRows, ...runRows.filter((row) => !row.mailbox)].filter((row) => row.outputs > 0 && row.scored < row.outputs).map((row) => row.key);
 
   return (
     <div className="columns">

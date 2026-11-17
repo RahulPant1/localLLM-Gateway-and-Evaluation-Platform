@@ -484,6 +484,16 @@ class Store:
             )
         return len(rows)
 
+    def set_execution_metrics(self, execution_id: str, metrics: dict) -> None:
+        """Replace an execution's metrics; used to show an agent run's steps as they happen."""
+        self._db.execute(
+            "UPDATE executions SET metrics = ? WHERE id = ?",
+            (json.dumps(metrics, ensure_ascii=False), execution_id),
+        )
+
+    def set_source_material(self, request_id: str, text: str | None) -> None:
+        self._db.execute("UPDATE requests SET source_material = ? WHERE id = ?", (text, request_id))
+
     def mark_running(self, execution_id: str) -> None:
         self._db.execute(
             "UPDATE executions SET status='running', started_at=? WHERE id=?",

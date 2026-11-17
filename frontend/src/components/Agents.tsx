@@ -8,8 +8,9 @@ import {
   type AgentTally,
   type ModelEntry,
 } from "../api";
-import { heat, modelLabel, percent, pretty, seconds, snippet, when } from "../format";
+import { heat, modelLabel, percent, pretty, seconds, when } from "../format";
 import { usePolling } from "../hooks";
+import { AgentSteps } from "./AgentSteps";
 import { ModelPicker } from "./ModelPicker";
 
 const STOP_TEXT: Record<string, string> = {
@@ -29,10 +30,6 @@ function outcome(r: AgentResult): { label: string; className: string } {
   return { label: r.score ? `✗ ${percent(r.score)}` : "✗", className: "status-failed" };
 }
 
-const formatArgs = (args: Record<string, unknown>) =>
-  Object.entries(args)
-    .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
-    .join(", ");
 
 /** What the agent did, step by step, and how each check came out. */
 function Trace({ result }: { result: AgentResult }) {
@@ -71,30 +68,7 @@ function Trace({ result }: { result: AgentResult }) {
             {result.text_calls ? `, written as text: ${result.text_calls}` : ""} · the model{" "}
             {STOP_TEXT[result.stop_reason ?? ""] ?? result.stop_reason} · {seconds(result.execution_ms)}
           </p>
-          <ol className="trace">
-            {result.trace.map((step) => (
-              <li key={step.step}>
-                {step.content && <p className="trace-text">{step.content}</p>}
-                {step.calls.map((call, i) => (
-                  <div key={i} className={`trace-call ${call.invalid || call.error ? "bad" : ""}`}>
-                    <code>
-                      {call.name}({formatArgs(call.arguments)})
-                    </code>
-                    <details>
-                      <summary className="muted small">
-                        {call.invalid ? "invalid call" : call.error ? "app returned an error" : "result"}:{" "}
-                        {snippet(call.result, 90)}
-                      </summary>
-                      <pre>{call.result}</pre>
-                    </details>
-                  </div>
-                ))}
-                {step.calls_as_text && (
-                  <p className="muted small">The model wrote these calls as text; they were run anyway.</p>
-                )}
-              </li>
-            ))}
-          </ol>
+          <AgentSteps steps={result.trace} />
         </>
       )}
     </div>

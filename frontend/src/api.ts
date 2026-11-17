@@ -112,7 +112,7 @@ export interface RequestRecord {
   // Earlier turns sent by an API client with this prompt.
   history: { role: "user" | "assistant"; content: string }[];
   // "api" = came from another tool through the OpenAI-compatible endpoint.
-  source: "ui" | "api";
+  source: "ui" | "api" | "agent";
   created_at: string;
   executions: Execution[];
   routing: RoutingDecision | null;
@@ -485,7 +485,18 @@ export interface AgentSuite {
   categories: Record<string, { description: string; scenarios: number }>;
 }
 
+export interface Connector {
+  name: string;
+  label: string;
+  available: boolean;
+  detail: string;
+  tools: string[];
+}
+
 export const api = {
+  connectors: () => call<Connector[]>("/api/connectors"),
+  startAgentRun: (body: { prompt: string; model: string; apps: string[]; think: boolean }) =>
+    call<RequestRecord>("/api/agent-runs", body),
   agentSuites: () => call<AgentSuite[]>("/api/agents/suites"),
   agentRuns: () => call<AgentRunSummary[]>("/api/agents/runs"),
   agentRun: (id: string) => call<AgentRunDetail>(`/api/agents/runs/${id}`),

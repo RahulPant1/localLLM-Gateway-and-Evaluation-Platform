@@ -33,7 +33,7 @@ uv run pytest -m live     # real Ollama; loads a model
 ## Screens
 
 - **Overview**: which model suits which task, the leaderboard (with the function-calling result) and the router check. Routing, speed and request totals are under **System details** (see below).
-- **Playground**: one prompt on one model, or on several to compare them, with your recent prompts on the left. Calls from other tools (API) are listed there when you tick "Include calls from other tools".
+- **Playground**: one prompt on one model, or on several to compare them, with your recent prompts on the left. With **Tools** ticked, the model works as an agent on real apps, read-only (see "Connecting real apps"). Calls from other tools (API) are listed there when you tick "Include calls from other tools".
 - **Tests**: three views of the fixed tests.
   - **Models**: the lineup. Add a new model to every existing test, or hide one (see below).
   - **Batches**: many prompts on many models, with a results grid and export.
@@ -109,6 +109,49 @@ Each task offers only the tools of the apps it needs. The model gets a short sys
 **Reading a task.** Click a cell to see the task, each check with its result, and every step: what the model wrote, each call with its arguments, and what the app returned.
 
 **Defaults.** Thinking off, temperature 0, at most 1,024 output tokens per step (4,096 for models that can think). Models without tool support are not offered. **Run all tests** in Tests → Models adds a new model to the latest agent run as well.
+
+## Connecting real apps (agent mode in the Playground)
+
+In the **Playground**, the **Tools** row lets a model work as an agent on real apps: **Local files**, **Gmail** and **Web APIs**. Tick one or more, pick a model that can call tools (qwen3.5 by default, the best agent in the tests), and run. The model calls the tools, reads what they return and answers; the steps appear above the answer as they happen, and the run is saved like any other prompt.
+
+**Everything is read-only.** No tool can send, write, change or delete anything, so a model that misreads a request, or is misled by text inside an email, cannot do damage. The model is also told that what tools return is data, not instructions.
+
+| App | Tools | What leaves this machine |
+|---|---|---|
+| Local files | `list_files`, `read_file` (long files in parts), `search_files` (matching lines with the lines after them) | nothing |
+| Gmail | `search_emails` (Gmail search syntax), `read_email` | the searches and reads go to Google, your own mailbox |
+| Web APIs | `get_weather` (Open-Meteo), `convert_currency` (Frankfurter, ECB rates), `wikipedia_summary` | only the city, currency codes or topic |
+
+The web tools are fixed functions, not "fetch any URL", so a model cannot be talked into sending your data to an address someone planted in an email or a file.
+
+**Saved runs and judging.** An agent run is stored with its steps, and the tool results become the request's source material, so a judge can score whether the answer is grounded in what the tools returned. Runs that read Gmail are marked "contains Gmail data" in the Evaluate tab and are not picked by "Tick everything not fully scored": the judge package would include text from your mailbox.
+
+### Local files
+
+Set the folder in `.env` and restart the backend:
+
+```
+GATEWAY_FILES_ROOT=/mnt/c/Users/<you>/Documents/agent-share
+```
+
+Only that folder and its subfolders can be read. Paths outside it, including through `..` or symbolic links, are refused; hidden files and folders such as `.git` are skipped; binary files are not read. A dedicated folder with copies of what you want the model to see is safer than your whole home folder.
+
+### Gmail
+
+This uses your own Google Cloud OAuth client and only the **read-only** Gmail permission. A separate test Google account is recommended. Setup takes about ten minutes, once:
+
+1. Open the [Google Cloud console](https://console.cloud.google.com/) and create a project (any name).
+2. **APIs & Services → Library**: enable the **Gmail API**.
+3. **Google Auth Platform** (OAuth consent screen): user type **External**; give an app name and your email. Under **Audience**, add the Google account you will connect as a **test user**. Leave the app in **Testing**.
+4. **Clients → Create client**: type **Desktop app**. Download the JSON file and save it as `data/gmail_client_secret.json` in this project (the `data/` folder is never committed).
+5. Run `cd backend && uv run python scripts/gmail_auth.py`. Open the link it prints, sign in with the test account and allow read-only access. Google warns that the app is not verified: it is your own app, so choose **Continue**. If the browser then shows an error page (WSL can block the return address), copy the page's address and paste it into the terminal.
+6. Restart the backend. **Gmail** is now available in the Playground's Tools row, showing the connected address.
+
+While the app is in Testing, Google expires the permission after 7 days; run step 5 again when Gmail shows as not connected. To disconnect, delete `data/gmail_token.json` and remove the app at [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
+
+### Web APIs
+
+On by default; they need no keys. `GATEWAY_WEB_APIS=false` in `.env` switches them off.
 
 ## Answers appear while they are written
 

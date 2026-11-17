@@ -80,6 +80,7 @@ This is a small, single-judge, author-written test; treat it as a worked example
 - **OpenAI-compatible endpoint** at `/v1` with streaming and function calling, so editors, chat apps and agent frameworks can use the local models through the router (model name `auto`).
 - **Tool-use tests:** 40 function-calling cases from the Berkeley Function Calling Leaderboard (one call, choosing among functions, parallel calls, and knowing when no function fits), scored automatically with no judge.
 - **Agent tests:** 20 multi-step tasks on simulated files, mail and a company API, including recovery from errors and prompt injection hidden in an email or a file. Scored from the final state of the apps, with a step-by-step trace of every run.
+- **Real apps, read-only:** in the Playground a model can work as an agent on your local files, your Gmail (read-only Google permission) and public web APIs, with each step shown. No tool can send, write or delete anything.
 - **Model lineup:** add a newly installed model to every existing batch and tool-use test with one click, or hide a model and its results everywhere without deleting anything.
 - **Follow-up chat** from any answer, with a context-window meter.
 - **Guardrails for small machines:** a memory guard (unloads the model before Ollama's prompt cache exhausts RAM), a queue that runs one generation at a time, and detection of answers lost to thinking.
@@ -160,6 +161,7 @@ docs/                      USAGE, ARCHITECTURE, RESULTS, SWAP_TIMES, sample prom
 - Tested only on one machine (RTX 4060 8 GB, WSL2 with 6 to 9 GB RAM) and with five models.
 - One generation runs at a time, because the GPU holds one model. A batch and an editor assistant share the queue.
 - The `/v1` endpoint does not support images and has no authentication; it is meant for `localhost`.
+- Real-app agents are read-only by design: they can look things up in files, Gmail and web APIs but cannot act (send, draft, write). Gmail setup needs your own Google Cloud OAuth client.
 - Results rest on 28 prompts and one judge. Judge agreement and human spot checks have not been done.
 - The in-app Claude API judge, human review of scores and a learned routing policy are not built.
 

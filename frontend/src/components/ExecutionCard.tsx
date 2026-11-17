@@ -1,6 +1,7 @@
-import { ranOutWhileThinking, type Execution } from "../api";
+import { type AgentStep, ranOutWhileThinking, type Execution } from "../api";
 import { STATUS_TEXT, WARNING_TEXT, seconds, pretty } from "../format";
 import { useNow } from "../hooks";
+import { AgentSteps } from "./AgentSteps";
 import { Markdown } from "./Markdown";
 
 const DIMENSION_LABELS: Record<string, string> = {
@@ -25,8 +26,18 @@ interface Props {
   onRetry?: () => void;
 }
 
+interface AgentMetrics {
+  apps: string[];
+  trace: AgentStep[];
+  stop_reason: string | null;
+  tool_calls: number;
+}
+
+const APP_LABEL: Record<string, string> = { files: "local files", gmail: "Gmail", web: "web APIs" };
+
 export function ExecutionCard({ execution, onContinue, onRetry }: Props) {
   const m = execution.metrics ?? {};
+  const agent = (m as unknown as { agent?: AgentMetrics }).agent;
   return (
     <article className="card">
       <header className="card-head">
@@ -43,7 +54,12 @@ export function ExecutionCard({ execution, onContinue, onRetry }: Props) {
             <Elapsed execution={execution} />
           </span>
         )}
-        {execution.status === "completed" && (
+        {execution.status === "completed" && agent && (
+          <span className="muted small">
+            {seconds(execution.execution_ms)} total · {m.output_tokens ?? "-"} tokens generated
+          </span>
+        )}
+        {execution.status === "completed" && !agent && (
           <span className="muted small">
             {seconds(execution.execution_ms)} total · load {seconds(m.load_ms as number)} ·{" "}
             {m.output_tokens ?? "-"} tokens · {m.tokens_per_second ?? "-"} tok/s
@@ -63,6 +79,17 @@ export function ExecutionCard({ execution, onContinue, onRetry }: Props) {
           Run again without thinking
         </button>
       )}
+      {agent && (
+        <details className="agent-steps" open={execution.status === "running"}>
+          <summary>
+            Agent with {agent.apps.map((a) => APP_LABEL[a] ?? a).join(", ")} (read-only) · {agent.trace.length}{" "}
+            step{agent.trace.length === 1 ? "" : "s"}, {agent.tool_calls} tool call{agent.tool_calls === 1 ? "" : "s"}
+            {agent.stop_reason && agent.stop_reason !== "answered" && ` · stopped: ${agent.stop_reason.replace("_", " ")}`}
+          </summary>
+          <AgentSteps steps={agent.trace} />
+        </details>
+      )}
+      {execution.status === "running" && agent && <p className="muted small">Working… each step appears above as it finishes.</p>}
       {execution.warnings.map((w) => (
         <p key={w} className="warning">
           {WARNING_TEXT[w] ?? w}

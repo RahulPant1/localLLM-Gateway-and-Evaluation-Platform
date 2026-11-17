@@ -17,6 +17,9 @@ from llm_gateway.agents.suites import load_agent_suites
 from llm_gateway.api import router as runs_router
 from llm_gateway.catalog import ModelCatalog
 from llm_gateway.config import PROJECT_ROOT, Settings, get_settings
+from llm_gateway.connectors import build_connectors
+from llm_gateway.connectors.api import router as connectors_router
+from llm_gateway.connectors.live import LiveAgentRunner
 from llm_gateway.execution import ExecutionQueue, MemoryGuard, QueueState
 from llm_gateway.lineup import router as lineup_router
 from llm_gateway.openai_api import router as openai_router
@@ -188,10 +191,14 @@ def create_app(provider: ModelProvider | None = None, settings: Settings | None 
         app.state.tool_runner = ToolRunner(store, active, app.state.catalog, app.state.queue)
         app.state.agent_suites = load_agent_suites(config.agent_suites_dir)
         app.state.agent_runner = AgentRunner(store, active, app.state.catalog, app.state.queue)
+        app.state.live_agent = LiveAgentRunner(
+            store, app.state.catalog, app.state.queue, build_connectors(config)
+        )
         yield
         await app.state.runner.shutdown()
         await app.state.tool_runner.shutdown()
         await app.state.agent_runner.shutdown()
+        await app.state.live_agent.shutdown()
         store.close()
         if client is not None:
             await client.aclose()
@@ -204,6 +211,7 @@ def create_app(provider: ModelProvider | None = None, settings: Settings | None 
     app.include_router(tool_use_router)
     app.include_router(lineup_router)
     app.include_router(agents_router)
+    app.include_router(connectors_router)
 
     @app.exception_handler(ProviderError)
     async def provider_error(_: Request, exc: ProviderError) -> JSONResponse:

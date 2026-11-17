@@ -39,6 +39,14 @@ class Settings(BaseSettings):
     # Local model that splits pasted prompt sets in "smart" mode. When it is not
     # installed, the router's classifier model is used.
     split_model: str = "gemma4:e4b-it-q4_K_M"
+    # Real apps for agents (all read-only). The folder local files are read from;
+    # unset = local files off.
+    files_root: Path | None = None
+    # Google OAuth client file (desktop app) and the token scripts/gmail_auth.py saves.
+    gmail_client_path: Path = Path("data/gmail_client_secret.json")
+    gmail_token_path: Path = Path("data/gmail_token.json")
+    # Weather, exchange-rate and Wikipedia tools (free public APIs, no keys).
+    web_apis: bool = True
     # Folder of multi-step agent scenarios (JSON).
     agent_suites_dir: Path = Path("config/agent_suites")
     # "auto": ask the classifier model when the quick rules are unsure. "off": rules only.
@@ -78,10 +86,19 @@ class Settings(BaseSettings):
         "judge_prompt_path",
         "tool_suites_dir",
         "agent_suites_dir",
+        "gmail_client_path",
+        "gmail_token_path",
     )
     @classmethod
     def _resolve_database_path(cls, value: Path) -> Path:
         return value if value.is_absolute() else PROJECT_ROOT / value
+
+    @field_validator("files_root", mode="before")
+    @classmethod
+    def _blank_root_is_none(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return Path(value).expanduser() if isinstance(value, str) else value
 
     @field_validator("ollama_url")
     @classmethod

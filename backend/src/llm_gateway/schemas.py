@@ -118,7 +118,7 @@ class RequestRecord(BaseModel):
     # parent_execution_id instead and leave this empty.
     history: list[ChatMessage] = []
     # "ui" = made in the app; "api" = came through the OpenAI-compatible endpoint.
-    source: Literal["ui", "api"] = "ui"
+    source: Literal["ui", "api", "agent"] = "ui"
     created_at: datetime
     executions: list[Execution] = []
     # The router's decision. Null for manual requests, and for automatic ones

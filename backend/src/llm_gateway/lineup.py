@@ -11,6 +11,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from llm_gateway.agents.runner import AgentRunner
+from llm_gateway.agents.suites import AgentSuite
 from llm_gateway.providers.base import ModelProvider, ProviderError
 from llm_gateway.runner import Runner
 from llm_gateway.store import Store
@@ -38,6 +40,8 @@ class ToolRunInfo(BaseModel):
     name: str
     suite: str
     cases: int
+    # "tool" for function-calling runs, "agent" for multi-step agent runs.
+    kind: str = "tool"
 
 
 class LineupEntry(BaseModel):
@@ -50,7 +54,7 @@ class LineupEntry(BaseModel):
     capabilities: list[str] = []
     # Batch id -> prompts answered / failed / waiting / judged.
     batches: dict[str, dict] = {}
-    # Tool run id -> cases passed / wrong / failed / waiting.
+    # Tool or agent run id -> cases passed / wrong / failed / waiting.
     tool_runs: dict[str, dict] = {}
     # Prompts and tool cases this model has never been run on.
     not_run: int = 0
@@ -74,6 +78,7 @@ class RunAllResult(BaseModel):
     model: str
     queued_answers: int
     queued_tool_cases: int
+    queued_agent_scenarios: int = 0
     notes: list[str]
 
 
@@ -88,6 +93,7 @@ async def lineup(request: Request, store: StoreDep) -> Lineup:
     batches = [
         BatchInfo(id=b.id, name=b.name, prompts=b.request_count) for b in store.list_batches()
     ]
+    agent_suites: dict[str, AgentSuite] = request.app.state.agent_suites
     runs = [
         ToolRunInfo(
             id=r["id"],
@@ -96,8 +102,20 @@ async def lineup(request: Request, store: StoreDep) -> Lineup:
             cases=len(suites[r["suite"]].cases) if r["suite"] in suites else 0,
         )
         for r in store.list_tool_runs()
+    ] + [
+        ToolRunInfo(
+            id=r["id"],
+            name=r["name"],
+            suite=r["suite"],
+            cases=len(agent_suites[r["suite"]].scenarios) if r["suite"] in agent_suites else 0,
+            kind="agent",
+        )
+        for r in store.list_tool_runs(kind="agent")
     ]
-    batch_cov, tool_cov = store.batch_coverage(), store.tool_coverage()
+    batch_cov = store.batch_coverage()
+    tool_cov = store.tool_coverage()
+    for model, per_run in store.tool_coverage(kind="agent").items():
+        tool_cov.setdefault(model, {}).update(per_run)
     names = sorted(set(installed) | store.models_with_results(), key=str.lower)
     entries = []
     for name in names:
@@ -182,7 +200,9 @@ async def run_all(body: ModelName, request: Request, store: StoreDep) -> RunAllR
 
     queued_cases = 0
     if "tools" not in info.capabilities:
-        notes.append("Tool-use tests skipped: Ollama reports no tool support for this model.")
+        notes.append(
+            "Tool-use and agent tests skipped: Ollama reports no tool support for this model."
+        )
     else:
         for suite in suites.values():
             run_id = store.latest_tool_run(suite.id) or store.create_tool_run(
@@ -194,11 +214,28 @@ async def run_all(body: ModelName, request: Request, store: StoreDep) -> RunAllR
             if added:
                 queued_cases += added
                 tool_runner.schedule(run_id, suite)
-    if not queued_answers and not queued_cases:
+    queued_scenarios = 0
+    if "tools" in info.capabilities:
+        agent_runner: AgentRunner = request.app.state.agent_runner
+        for agent_suite in request.app.state.agent_suites.values():
+            run_id = store.latest_tool_run(agent_suite.id, kind="agent") or store.create_tool_run(
+                agent_suite.id, agent_suite.title, [], False, [], kind="agent"
+            )
+            added = store.add_model_to_tool_run(
+                run_id,
+                body.model,
+                [(s.id, s.category) for s in agent_suite.scenarios],
+                kind="agent",
+            )
+            if added:
+                queued_scenarios += added
+                agent_runner.schedule(run_id, agent_suite)
+    if not queued_answers and not queued_cases and not queued_scenarios:
         notes.append("Nothing to run: this model has already done every test.")
     return RunAllResult(
         model=body.model,
         queued_answers=queued_answers,
         queued_tool_cases=queued_cases,
+        queued_agent_scenarios=queued_scenarios,
         notes=notes,
     )

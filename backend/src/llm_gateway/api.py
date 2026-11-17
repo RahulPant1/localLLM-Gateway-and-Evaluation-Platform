@@ -1,10 +1,23 @@
 """Endpoints for requests, batches, export and evaluations."""
 
+import csv
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from pydantic import BaseModel, Field
 
+from llm_gateway.batch_input import (
+    MAX_SMART_LINES,
+    SMART_INSTRUCTIONS,
+    SMART_SCHEMA,
+    Method,
+    apply_smart_split,
+    numbered_view,
+    parse_file,
+    split_text,
+)
 from llm_gateway.catalog import ModelCatalog
 from llm_gateway.conversation import build_thread, context_usage, full_thread
 from llm_gateway.evaluation import (
@@ -14,6 +27,7 @@ from llm_gateway.evaluation import (
     summarise_batch,
 )
 from llm_gateway.overview import Overview, build_overview
+from llm_gateway.providers.base import GenerationRequest
 from llm_gateway.routing.router import Router
 from llm_gateway.routing.types import RoutingDraft
 from llm_gateway.rubric import Rubric
@@ -253,6 +267,76 @@ def get_batch(batch_id: str, store: StoreDep, runner: RunnerDep) -> BatchDetail:
     for request in requests:
         runner.apply_live(request.executions)
     return BatchDetail(**summary.model_dump(), requests=requests)
+
+
+class BatchParseRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=2_000_000)
+    # Given for an uploaded file: its extension decides the format.
+    filename: str | None = None
+    method: Method = "auto"
+    # Model for the smart split; default: settings.split_model, else the classifier model.
+    model: str | None = None
+
+
+class BatchParseResult(BaseModel):
+    prompts: list[PromptInput]
+    method: str
+    notes: list[str]
+    model: str | None = None
+
+
+@router.post("/batches/parse")
+async def parse_batch_input(body: BatchParseRequest, request: Request) -> BatchParseResult:
+    """Split pasted text or an uploaded file into prompts, for review before running.
+
+    Nothing is stored. With method "smart", a local model marks where each
+    prompt starts; the text itself is cut here, so prompts are never reworded.
+    """
+    try:
+        if body.filename and not body.filename.lower().endswith((".txt", ".md")):
+            parsed = parse_file(body.text, body.filename)
+        elif body.method != "smart":
+            parsed = split_text(body.text, body.method)
+        else:
+            return await _smart_split(body, request)
+    except (ValueError, json.JSONDecodeError, csv.Error) as exc:
+        raise HTTPException(422, f"Could not read the prompts: {exc}") from exc
+    return BatchParseResult(prompts=parsed.prompts, method=parsed.method, notes=parsed.notes)
+
+
+async def _smart_split(body: BatchParseRequest, request: Request) -> BatchParseResult:
+    state = request.app.state
+    lines, view = numbered_view(body.text)
+    if len(lines) > MAX_SMART_LINES or len(view) > 24_000:
+        raise HTTPException(
+            413,
+            "Too long for the smart split. Upload it as JSON, JSONL or CSV, or use another method.",
+        )
+    installed = {m.name: m for m in await state.catalog.list()}
+    wanted = [body.model, state.settings.split_model, state.router.registry.classifier_model]
+    name = next((n for n in wanted if n and n in installed), None) or next(iter(installed), None)
+    if name is None:
+        raise HTTPException(503, "No local model is available for the smart split.")
+    record = await state.queue.run(
+        GenerationRequest(
+            model=name,
+            prompt=f"{SMART_INSTRUCTIONS}\n\n{view}",
+            think=False,
+            temperature=0,
+            max_tokens=2048,
+            response_schema=SMART_SCHEMA,
+        ),
+        installed[name],
+    )
+    try:
+        parsed = apply_smart_split(lines, json.loads(record.result.response))
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            502, f"{name} did not give a usable split ({exc}). Try another method or model."
+        ) from exc
+    return BatchParseResult(
+        prompts=parsed.prompts, method=parsed.method, notes=parsed.notes, model=name
+    )
 
 
 @router.post("/batches/{batch_id}/resume")

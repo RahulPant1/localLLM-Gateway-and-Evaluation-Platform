@@ -18,6 +18,14 @@ It runs [Ollama](https://ollama.com) models, stores every prompt and answer in S
 
 *Tests → Tool use: 40 function-calling cases from the Berkeley Function Calling Leaderboard, scored automatically.*
 
+![Tests, Agents: multi-step tasks per model](docs/images/tests-agents.png)
+
+*Tests → Agents: 20 multi-step tasks on simulated files, mail and an API, scored from the final state.*
+
+![One agent run, step by step](docs/images/agent-trace.png)
+
+*One agent run, step by step: `qwen3.5:4b` found the right date but sent it to an address it made up, so the check failed.*
+
 ![Playground: a prompt, the router's decision and the answer](docs/images/playground.png)
 
 *Playground: one prompt, routed automatically or run on chosen models, with earlier prompts on the left.*
@@ -49,17 +57,29 @@ It runs [Ollama](https://ollama.com) models, stores every prompt and answer in S
 | `qwen2.5-coder:7b` | 30 / 40 | 1 of 30 (writes JSON text instead) |
 | `deepseek-r1:8b` | 10 / 40 | never calls a tool |
 
+**Agent tasks** (20 multi-step tasks on simulated files, mail and an API, scored automatically):
+
+| Model | Tasks passed | Notes |
+|---|---|---|
+| `qwen3.5:4b` | **18 / 20** | explores when stuck; once invented a recipient's address |
+| `gemma4:e4b` | 15 / 20 | fastest; gives up instead of retrying or searching |
+| `qwen2.5-coder:7b` | 5 / 20 | guesses calls with placeholder values |
+| `deepseek-r1:8b` | 0 / 20 | never calls a tool |
+
+None of the three models that use tools obeyed instructions planted in an email or a file. The best single-call model (`gemma4:e4b`) was not the best agent.
+
 This is a small, single-judge, author-written test; treat it as a worked example of the method, not a benchmark.
 
 ## Features
 
 - **Run prompts** on one model, on several for comparison, or let the router choose.
-- **Batches:** many prompts across all models, grouped by model to limit the 5 to 19 s model swaps. Interrupted batches can be resumed.
+- **Batches:** many prompts across all models, grouped by model to limit the 5 to 19 s model swaps. Prompts can be pasted (split automatically, or by a local model that marks where each prompt starts without rewording it) or uploaded as JSON, JSONL or CSV. Interrupted batches can be resumed.
 - **Blind evaluation:** export outputs without model names, have any judge score them on a five-dimension rubric, paste the JSON back. The app computes the weighted overall score so it is reproducible. A Claude Code command, `/evaluate-batch`, does the whole round trip.
 - **Task labels:** the judge also labels each prompt with a task type and domain from fixed lists based on public benchmark families, so results show which model suits which kind of task.
 - **Overview screen:** per-model and per-task scores (all models compared on the same prompts), function-calling results, a check of the router's picks against the judged scores, and routing and throughput details.
 - **OpenAI-compatible endpoint** at `/v1` with streaming and function calling, so editors, chat apps and agent frameworks can use the local models through the router (model name `auto`).
 - **Tool-use tests:** 40 function-calling cases from the Berkeley Function Calling Leaderboard (one call, choosing among functions, parallel calls, and knowing when no function fits), scored automatically with no judge.
+- **Agent tests:** 20 multi-step tasks on simulated files, mail and a company API, including recovery from errors and prompt injection hidden in an email or a file. Scored from the final state of the apps, with a step-by-step trace of every run.
 - **Model lineup:** add a newly installed model to every existing batch and tool-use test with one click, or hide a model and its results everywhere without deleting anything.
 - **Follow-up chat** from any answer, with a context-window meter.
 - **Guardrails for small machines:** a memory guard (unloads the model before Ollama's prompt cache exhausts RAM), a queue that runs one generation at a time, and detection of answers lost to thinking.

@@ -285,6 +285,8 @@ export interface SystemStatus {
   evaluator: { configured: boolean; judge_model: string };
 }
 
+export type SplitMethod = "auto" | "separator" | "numbered" | "blank_lines" | "lines" | "smart";
+
 export interface PromptInput {
   prompt: string;
   system?: string | null;
@@ -402,16 +404,99 @@ export interface LineupEntry {
 export interface Lineup {
   models: LineupEntry[];
   batches: { id: string; name: string; prompts: number }[];
-  tool_runs: { id: string; name: string; suite: string; cases: number }[];
+  tool_runs: { id: string; name: string; suite: string; cases: number; kind: "tool" | "agent" }[];
   unjudged: number;
 }
 
+export interface AgentTally {
+  passed: number;
+  failed: number;
+  errors: number;
+  waiting: number;
+}
+
+export interface AgentModelTally extends AgentTally {
+  model: string;
+  check_score: number | null;
+  by_category: Record<string, AgentTally>;
+  mean_steps: number | null;
+  mean_tool_calls: number | null;
+  invalid_calls: number;
+  text_calls: number;
+  mean_ms: number | null;
+}
+
+export interface AgentRunSummary {
+  id: string;
+  suite: string;
+  name: string;
+  models: string[];
+  think: boolean;
+  created_at: string;
+  total: number;
+  finished: number;
+  running: boolean;
+  per_model: AgentModelTally[];
+}
+
+export interface AgentStep {
+  step: number;
+  content: string;
+  thought: boolean;
+  ms: number;
+  calls_as_text: boolean;
+  calls: { name: string; arguments: Record<string, unknown>; result: string; invalid: boolean; error: boolean }[];
+}
+
+export interface AgentResult {
+  id: string;
+  case_id: string;
+  category: string;
+  model: string;
+  status: ExecutionStatus;
+  passed: boolean | null;
+  score: number | null;
+  title: string;
+  prompt: string;
+  apps: string[];
+  checks: { check: string; passed: boolean; detail: string }[];
+  trace: AgentStep[];
+  effects: Record<string, unknown[]>;
+  answer: string | null;
+  stop_reason: string | null;
+  steps: number | null;
+  tool_calls: number | null;
+  invalid_calls: number | null;
+  text_calls: number | null;
+  execution_ms: number | null;
+  error_code: string | null;
+  error_detail: string | null;
+}
+
+export interface AgentRunDetail extends AgentRunSummary {
+  results: AgentResult[];
+}
+
+export interface AgentSuite {
+  id: string;
+  title: string;
+  description: string;
+  scenario_count: number;
+  categories: Record<string, { description: string; scenarios: number }>;
+}
+
 export const api = {
+  agentSuites: () => call<AgentSuite[]>("/api/agents/suites"),
+  agentRuns: () => call<AgentRunSummary[]>("/api/agents/runs"),
+  agentRun: (id: string) => call<AgentRunDetail>(`/api/agents/runs/${id}`),
+  createAgentRun: (body: { suite: string; models: string[]; think: boolean }) =>
+    call<AgentRunSummary>("/api/agents/runs", body),
+  resumeAgentRun: (id: string) => call<AgentRunSummary>(`/api/agents/runs/${id}/resume`, {}),
   lineup: () => call<Lineup>("/api/lineup"),
   hideModel: (model: string) => call<unknown>("/api/lineup/hide", { model }),
   restoreModel: (model: string) => call<unknown>("/api/lineup/restore", { model }),
   runAllTests: (model: string) =>
-    call<{ queued_answers: number; queued_tool_cases: number; notes: string[] }>(
+    call<{ queued_answers: number; queued_tool_cases: number; queued_agent_scenarios: number; notes: string[] }>(
       "/api/lineup/run-all",
       { model },
     ),
@@ -428,9 +513,15 @@ export const api = {
     call<RequestRecord>("/api/requests", body),
   request: (id: string) => call<RequestRecord>(`/api/requests/${id}`),
   requests: () => call<RequestRecord[]>("/api/requests?limit=100"),
+  /** Split pasted text or a file into prompts, for review before running. Stores nothing. */
+  parseBatch: (body: { text: string; filename?: string; method?: SplitMethod; model?: string }) =>
+    call<{ prompts: PromptInput[]; method: string; notes: string[]; model: string | null }>(
+      "/api/batches/parse",
+      body,
+    ),
   createBatch: (body: {
     name: string;
-    prompts: string[];
+    prompts: (string | PromptInput)[];
     models: string[];
     think: boolean | null;
   }) => call<BatchSummary>("/api/batches", body),

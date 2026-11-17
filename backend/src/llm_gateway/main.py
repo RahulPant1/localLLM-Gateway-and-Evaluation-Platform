@@ -11,6 +11,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from llm_gateway import __version__
+from llm_gateway.agents.api import router as agents_router
+from llm_gateway.agents.runner import AgentRunner
+from llm_gateway.agents.suites import load_agent_suites
 from llm_gateway.api import router as runs_router
 from llm_gateway.catalog import ModelCatalog
 from llm_gateway.config import PROJECT_ROOT, Settings, get_settings
@@ -183,9 +186,12 @@ def create_app(provider: ModelProvider | None = None, settings: Settings | None 
         )
         app.state.tool_suites = load_suites(config.tool_suites_dir)
         app.state.tool_runner = ToolRunner(store, active, app.state.catalog, app.state.queue)
+        app.state.agent_suites = load_agent_suites(config.agent_suites_dir)
+        app.state.agent_runner = AgentRunner(store, active, app.state.catalog, app.state.queue)
         yield
         await app.state.runner.shutdown()
         await app.state.tool_runner.shutdown()
+        await app.state.agent_runner.shutdown()
         store.close()
         if client is not None:
             await client.aclose()
@@ -197,6 +203,7 @@ def create_app(provider: ModelProvider | None = None, settings: Settings | None 
     app.include_router(openai_router)
     app.include_router(tool_use_router)
     app.include_router(lineup_router)
+    app.include_router(agents_router)
 
     @app.exception_handler(ProviderError)
     async def provider_error(_: Request, exc: ProviderError) -> JSONResponse:

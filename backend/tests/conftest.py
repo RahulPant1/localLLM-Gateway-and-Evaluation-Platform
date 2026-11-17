@@ -61,6 +61,8 @@ class FakeProvider(ModelProvider):
         self.timeline: list[tuple[str, str]] = []
         # What the fake model writes as its answer text for a user message.
         self.content_for: dict[str, str] = {}
+        # Scripted agent turns, used in order: (content, [ToolCall, ...]).
+        self.chat_script: list[tuple[str, list[ToolCall]]] = []
 
     async def version(self) -> str:
         if self.error:
@@ -85,10 +87,21 @@ class FakeProvider(ModelProvider):
     async def chat(self, messages, tools, model, *, think=None, max_tokens=None, temperature=None):
         if self.error:
             raise self.error
-        self.chat_messages.append(messages)
+        self.chat_messages.append([dict(m) for m in messages])
         self.chat_tools.append(tools)
         self.timeline.append(("chat", model.name))
         await asyncio.sleep(self.delay)
+        if self.chat_script:
+            content, calls = self.chat_script.pop(0)
+            return ToolTurn(
+                model=model.name,
+                content=content,
+                tool_calls=calls,
+                num_ctx=model.num_ctx,
+                prompt_tokens=20,
+                output_tokens=5,
+                done_reason="stop",
+            )
         return ToolTurn(
             model=model.name,
             content=self.content_for.get(messages[-1]["content"], ""),

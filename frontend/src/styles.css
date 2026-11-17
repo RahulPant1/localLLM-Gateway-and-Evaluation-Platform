@@ -325,3 +325,28 @@ details.system-details > summary {
 details.system-details[open] > summary { margin-bottom: 16px; }
 .list-filter { display: flex; align-items: center; gap: 6px; margin: 4px 0 8px; }
 .stack { display: flex; flex-direction: column; gap: 16px; }
+
+/* Agent traces */
+ul.checks { list-style: none; padding: 0; margin: 4px 0 10px; }
+ul.checks li { padding: 2px 0; }
+ul.checks li.ok { color: var(--good); }
+ul.checks li.bad { color: var(--bad); }
+ol.trace { padding-left: 22px; margin: 6px 0; }
+ol.trace > li { margin-bottom: 10px; }
+.trace-text { margin: 2px 0 4px; white-space: pre-wrap; }
+.trace-call { border-left: 3px solid var(--border); padding: 2px 0 2px 10px; margin: 4px 0; }
+.trace-call.bad { border-left-color: var(--bad); }
+.trace-call code { font-size: 12.5px; overflow-wrap: anywhere; }
+.trace-call pre { white-space: pre-wrap; font-size: 12px; max-height: 240px; overflow: auto; }
+.cell .small { margin-left: 6px; }
+
+/* Batch prompt input */
+.prompt-set-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.file-chip { padding: 8px 10px; border: 1px dashed var(--border); border-radius: 8px; }
+.prompt-preview { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 8px 0; max-height: 380px; overflow: auto; }
+.prompt-preview ol { margin: 4px 0; padding: 0; list-style: none; }
+.prompt-preview li { display: flex; gap: 6px; align-items: flex-start; justify-content: space-between; padding: 2px 0; }
+.prompt-preview li details { flex: 1; min-width: 0; }
+.prompt-preview li summary { cursor: pointer; font-size: 13px; overflow-wrap: anywhere; }
+.prompt-preview pre { white-space: pre-wrap; font-size: 12px; margin: 4px 0; }
+.prompt-preview .num { min-width: 22px; padding-top: 1px; }

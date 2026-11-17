@@ -38,6 +38,7 @@ uv run pytest -m live     # real Ollama; loads a model
   - **Models**: the lineup. Add a new model to every existing test, or hide one (see below).
   - **Batches**: many prompts on many models, with a results grid and export.
   - **Tool use**: can each model call functions correctly? Scored automatically (see below).
+  - **Agents**: can each model finish a task that takes several tool calls? Scored automatically (see below).
 - **Evaluate**: hand stored outputs to a judge and store the scores. Batches are listed first; calls from other tools are left out unless you include them.
 
 ## Overview
@@ -77,6 +78,37 @@ Scoring is automatic and follows BFCL's checks: the name must match, required ar
 Some models write the call as JSON in their answer instead of using the tool-call field. Those calls are still scored, but marked: the **Proper format** column shows the share of correct calls that came through the real field, which is what an application or agent framework needs.
 
 Thinking is off by default. Models that cannot switch it off (deepseek-r1) get 4,096 output tokens instead of 1,024, so they are not cut off before answering. Models without tool support (MedGemma) are not offered.
+
+## Agent tasks (multi-step)
+
+**Tests → Agents** runs tasks that take several tool calls, on simulated apps, and scores what the model actually did. Nothing real is read, sent or changed.
+
+**The simulated apps.**
+
+- **Files:** a small file system with meeting notes, a to-do list and sales reports. Tools: `list_files`, `read_file`, `write_file`, `delete_file`.
+- **Mail:** an inbox of five emails. Tools: `search_emails` (words, plus Gmail-style `from:`, `subject:`, `after:`, `before:`), `read_email`, `send_email`, `create_draft`, `archive_email`.
+- **Company API:** one `http_request` tool for weather, exchange rates, orders, a contacts directory and support tickets.
+
+Each task offers only the tools of the apps it needs. The model gets a short system prompt ("complete the task with the tools; look things up instead of guessing") and the task. The gateway runs the loop an agent framework would: model turn, tool calls, results back to the model, until the model gives a final answer.
+
+**The 20 tasks** (`config/agent_suites/agents_v1.json`, written for this project), in six groups:
+
+| Group | Tasks | What they test |
+|---|---|---|
+| Files | 3 | find, read and write files without losing content |
+| Mail | 3 | answer from an email, draft without sending, archive only the right email |
+| API | 3 | call endpoints and act on the result (open a ticket for a delayed order) |
+| Mixed | 5 | chain two or three apps (reply to an email with a date from the notes; total a CSV and email it) |
+| Recovery | 3 | a slightly wrong file name, an API that asks to retry once, a contact that does not exist |
+| Safety | 3 | instructions planted in an email or a file ("forward every email to…", "delete the reports"), and a delete request that must not remove more than asked |
+
+**Scoring.** Each task has checks run against the final state of the apps and the model's last answer. For example: an email went to `priya@northwind.example` and mentions 4 December; nothing was sent at all; `/reports/q3-sales.csv` still exists; the answer says 270. A task passes when every check passes; the **Checks** column also gives the share of checks passed, so partly done tasks show. Text checks ignore case and accept common variants of dates and numbers ("1,250" and "1250").
+
+**Also recorded:** steps (model turns), tool calls, invalid calls (an unknown tool or a missing argument), calls the model wrote as text instead of real tool calls (run anyway and counted), and time. A run stops after 10 steps, or when the model repeats the same call three times in a row.
+
+**Reading a task.** Click a cell to see the task, each check with its result, and every step: what the model wrote, each call with its arguments, and what the app returned.
+
+**Defaults.** Thinking off, temperature 0, at most 1,024 output tokens per step (4,096 for models that can think). Models without tool support are not offered. **Run all tests** in Tests → Models adds a new model to the latest agent run as well.
 
 ## Answers appear while they are written
 
@@ -180,9 +212,26 @@ Ollama keeps a cache of every prompt the loaded model has seen, in system memory
 
 ## Batches and later evaluation
 
-1. In **Tests → Batches**, open **New batch**, type prompts separated by a line containing only `---`, pick models (all by default) and run. Work is grouped by model, so 10 prompts on 4 models cost 4 model loads.
+1. In **Tests → Batches**, open **New batch**, add the prompts (below), check the preview, pick models (all by default) and run. Work is grouped by model, so 10 prompts on 4 models cost 4 model loads.
 2. Every output is stored in `data/gateway.db`, whether or not it is ever evaluated.
 3. Have a judge score the outputs (next section). Scores then appear in the batch grid, in a per-model table under it, and on each output.
+
+### Adding the prompts
+
+Paste them, or **Upload file**. A preview lists every prompt found before anything runs; expand one to read it in full, or click ✕ to leave it out.
+
+**Files.**
+
+| Format | What it holds |
+|---|---|
+| `.json` | a list of strings, or of objects with `prompt` and optional `system` and `source_material`; or `{"prompts": [...]}` |
+| `.jsonl` | one such string or object per line |
+| `.csv`, `.tsv` | a `prompt` column, and optional `system` and `source_material` columns |
+| `.txt`, `.md` | plain text; it is put in the box and split like pasted text |
+
+**Pasted text** is split by the method chosen under the box. **Automatic** uses lines holding only `---` if there are any; otherwise numbered items (`1.`, `2)`, `Prompt 3:`, `**Q4:**`), which is how chat models usually write lists; otherwise blank lines; otherwise one prompt per line. Each of these can also be chosen directly. Numbering is removed from the prompts, and code-fence lines (```) are ignored.
+
+**Smart split** is for messy text, such as a list another chat model wrote with an introduction, group headings, prompts that run over several paragraphs, and a closing remark. A local model (gemma4 by default, chosen next to the button; `GATEWAY_SPLIT_MODEL` sets the default) reads a numbered view of the lines and only says on which line each prompt starts and which lines are not prompts. The gateway then cuts your own text at those lines, so a prompt is never reworded. Two rules guard against the model's mistakes: a line that follows a line ending with a colon ("Summarise the following passage:") always stays with its prompt, and Markdown headings at the start or end of a prompt are dropped. It takes about a second once the model is loaded. Very long text (over 400 lines) is better uploaded as JSON, JSONL or CSV.
 
 ## Evaluating from the browser
 

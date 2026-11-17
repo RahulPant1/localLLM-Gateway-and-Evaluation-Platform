@@ -24,7 +24,7 @@ function BatchCell({ entry, id, prompts }: { entry: LineupEntry; id: string; pro
   );
 }
 
-function ToolCell({ entry, id, cases }: { entry: LineupEntry; id: string; cases: number }) {
+function ToolCell({ entry, id, cases, agent }: { entry: LineupEntry; id: string; cases: number; agent: boolean }) {
   if (!entry.tools) return <span className="muted">no tool support</span>;
   const c = entry.tool_runs[id];
   if (!c) return <span className="muted">not run</span>;
@@ -34,7 +34,9 @@ function ToolCell({ entry, id, cases }: { entry: LineupEntry; id: string; cases:
       {done}/{cases} done
       {c.waiting > 0 && <span className="pill status-running small">{c.waiting} running</span>}
       <br />
-      <span className="muted small">{done ? `${Math.round((c.passed / done) * 100)}% correct` : ""}</span>
+      <span className="muted small">
+        {done ? `${agent ? `${c.passed} tasks passed` : `${Math.round((c.passed / done) * 100)}% correct`}` : ""}
+      </span>
     </span>
   );
 }
@@ -77,7 +79,7 @@ export function Models({ onEvaluate }: Props) {
     act(m.name, async () => {
       const r = await api.runAllTests(m.name);
       return [
-        `${modelLabel(m.name)}: queued ${r.queued_answers} batch answers and ${r.queued_tool_cases} tool-use cases.`,
+        `${modelLabel(m.name)}: queued ${r.queued_answers} batch answers, ${r.queued_tool_cases} tool-use cases and ${r.queued_agent_scenarios} agent tasks.`,
         ...r.notes,
       ].join(" ");
     });
@@ -106,7 +108,9 @@ export function Models({ onEvaluate }: Props) {
               <th key={b.id}>{b.name}</th>
             ))}
             {lineup.tool_runs.map((r) => (
-              <th key={r.id}>Tool use: {r.name}</th>
+              <th key={r.id}>
+                {r.kind === "agent" ? "Agents" : "Tool use"}: {r.name}
+              </th>
             ))}
             <th />
           </tr>
@@ -129,7 +133,7 @@ export function Models({ onEvaluate }: Props) {
               ))}
               {lineup.tool_runs.map((r) => (
                 <td key={r.id}>
-                  <ToolCell entry={m} id={r.id} cases={r.cases} />
+                  <ToolCell entry={m} id={r.id} cases={r.cases} agent={r.kind === "agent"} />
                 </td>
               ))}
               <td className="actions">

@@ -1,5 +1,11 @@
 import { useState } from "react";
-import { api, type GroupRow, type Overview as OverviewData, type ToolRunSummary } from "../api";
+import {
+  type AgentRunSummary,
+  api,
+  type GroupRow,
+  type Overview as OverviewData,
+  type ToolRunSummary,
+} from "../api";
 import {
   CATEGORY_TEXT,
   DECIDED_BY_TEXT,
@@ -405,7 +411,17 @@ function toolScores(runs: ToolRunSummary[]): ToolScores {
   return scores;
 }
 
-function LeaderboardPanel({ data, tools }: { data: OverviewData; tools: ToolScores }) {
+function agentScores(runs: AgentRunSummary[]): ToolScores {
+  const scores: ToolScores = new Map();
+  for (const run of runs)
+    for (const m of run.per_model) {
+      const done = m.passed + m.failed;
+      if (done > 0 && !scores.has(m.model)) scores.set(m.model, { passed: m.passed, done });
+    }
+  return scores;
+}
+
+function LeaderboardPanel({ data, tools, agents }: { data: OverviewData; tools: ToolScores; agents: ToolScores }) {
   const e = data.evaluation;
   if (e.by_model.length === 0) return null;
   // Groundedness is only scored when a prompt has source material; hide the column otherwise.
@@ -435,6 +451,11 @@ function LeaderboardPanel({ data, tools }: { data: OverviewData; tools: ToolScor
               {tools.size > 0 && (
                 <th className="num" title="Correct function calls in the Tool use tests, scored automatically">
                   Tool calls
+                </th>
+              )}
+              {agents.size > 0 && (
+                <th className="num" title="Multi-step agent tasks passed, from Tests → Agents">
+                  Agent tasks
                 </th>
               )}
             </tr>
@@ -476,6 +497,22 @@ function LeaderboardPanel({ data, tools }: { data: OverviewData; tools: ToolScor
                       const t = tools.get(row.model);
                       return t ? (
                         <span title={`${t.passed} of ${t.done} correct`}>{percent(t.passed / t.done)}</span>
+                      ) : (
+                        <span className="muted" title="Not tested, or no tool support">
+                          -
+                        </span>
+                      );
+                    })()}
+                  </td>
+                )}
+                {agents.size > 0 && (
+                  <td className="num">
+                    {(() => {
+                      const a = agents.get(row.model);
+                      return a ? (
+                        <span title={`${a.passed} of ${a.done} tasks passed`}>
+                          {a.passed}/{a.done}
+                        </span>
                       ) : (
                         <span className="muted" title="Not tested, or no tool support">
                           -
@@ -542,12 +579,14 @@ export function Overview() {
   const [data, setData] = useState<OverviewData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tools, setTools] = useState<ToolScores>(new Map());
+  const [agents, setAgents] = useState<ToolScores>(new Map());
 
   usePolling(
     async () => {
       try {
         setData(await api.overview(days));
         setTools(toolScores(await api.toolRuns().catch(() => [])));
+        setAgents(agentScores(await api.agentRuns().catch(() => [])));
         setError(null);
       } catch (e) {
         setError((e as Error).message);
@@ -577,7 +616,7 @@ export function Overview() {
       {data && (
         <div className="overview-grid">
           <TaskPanel data={data} />
-          <LeaderboardPanel data={data} tools={tools} />
+          <LeaderboardPanel data={data} tools={tools} agents={agents} />
           <RouterCheckPanel data={data} />
           <details className="system-details">
             <summary>System details: routing, speed and requests</summary>

@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     judge_prompt_path: Path = Path("config/judge_prompt.md")
     # Folder of tool-calling test suites (JSON).
     tool_suites_dir: Path = Path("config/tool_suites")
+    # Local model that splits pasted prompt sets in "smart" mode. When it is not
+    # installed, the router's classifier model is used.
+    split_model: str = "gemma4:e4b-it-q4_K_M"
+    # Folder of multi-step agent scenarios (JSON).
+    agent_suites_dir: Path = Path("config/agent_suites")
     # "auto": ask the classifier model when the quick rules are unsure. "off": rules only.
     router_llm: Literal["auto", "off"] = "auto"
     # Below this clarity (0-1) the quick rules count as unsure.
@@ -67,7 +72,12 @@ class Settings(BaseSettings):
         return value
 
     @field_validator(
-        "database_path", "registry_path", "rubric_path", "judge_prompt_path", "tool_suites_dir"
+        "database_path",
+        "registry_path",
+        "rubric_path",
+        "judge_prompt_path",
+        "tool_suites_dir",
+        "agent_suites_dir",
     )
     @classmethod
     def _resolve_database_path(cls, value: Path) -> Path:

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   api,
   type BatchDetail,
@@ -6,22 +6,14 @@ import {
   type Execution,
   type ModelEntry,
   type ModelScores,
+  type PromptInput,
   RESUMABLE_CODES,
 } from "../api";
 import { meanScore, modelLabel, seconds, snippet, when } from "../format";
 import { usePolling } from "../hooks";
 import { ModelPicker } from "./ModelPicker";
+import { PromptSetInput } from "./PromptSetInput";
 import { RequestView } from "./RequestView";
-
-const SEPARATOR = /^\s*---\s*$/m;
-
-/** Split the text box into prompts: a line holding only --- ends one prompt. */
-export function splitPrompts(text: string): string[] {
-  return text
-    .split(SEPARATOR)
-    .map((p) => p.trim())
-    .filter(Boolean);
-}
 
 interface CellProps {
   execution: Execution;
@@ -56,7 +48,8 @@ interface Props {
 
 export function Batches({ models, modelsError, onEvaluate }: Props) {
   const [name, setName] = useState("");
-  const [text, setText] = useState("");
+  const [prompts, setPrompts] = useState<PromptInput[]>([]);
+  const [resetKey, setResetKey] = useState(0);
   const [selected, setSelected] = useState<string[] | null>(null);
   const [thinking, setThinking] = useState(true);
   const [batches, setBatches] = useState<BatchSummary[]>([]);
@@ -71,7 +64,6 @@ export function Batches({ models, modelsError, onEvaluate }: Props) {
     if (models && selected === null) setSelected(models.map((m) => m.name));
   }, [models, selected]);
 
-  const prompts = useMemo(() => splitPrompts(text), [text]);
   const chosen = selected ?? [];
 
   usePolling(async () => setBatches(await api.batches().catch(() => batches)), 3000, []);
@@ -107,7 +99,7 @@ export function Batches({ models, modelsError, onEvaluate }: Props) {
       const batch = await api.createBatch({ name, prompts, models: chosen, think: thinking ? null : false });
       setOpenId(batch.id);
       setCell(null);
-      setText("");
+      setResetKey((k) => k + 1);
       setName("");
       setBatches(await api.batches());
     } catch (e) {
@@ -157,16 +149,7 @@ export function Batches({ models, modelsError, onEvaluate }: Props) {
           Every prompt runs on every chosen model. All outputs are stored so they can be evaluated later.
         </p>
         <input type="text" placeholder="Batch name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
-        <textarea
-          className="prompt"
-          rows={12}
-          placeholder={"First prompt…\n---\nSecond prompt…\n---\nThird prompt…"}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-        />
-        <p className="muted small">
-          Put a line containing only <code>---</code> between prompts. A prompt may span several lines.
-        </p>
+        <PromptSetInput models={models} onChange={setPrompts} resetKey={resetKey} />
 
         <h3>Models</h3>
         <ModelPicker models={models} error={modelsError} selected={chosen} onChange={setSelected} />

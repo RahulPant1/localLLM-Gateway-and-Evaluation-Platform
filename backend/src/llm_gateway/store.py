@@ -170,6 +170,47 @@ MIGRATIONS = [
         hidden_at TEXT NOT NULL
     );
     """,
+    # 9: multi-step agent runs against simulated apps.
+    """
+    CREATE TABLE agent_runs (
+        id TEXT PRIMARY KEY,
+        suite TEXT NOT NULL,
+        name TEXT NOT NULL,
+        models TEXT NOT NULL,
+        think INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+    );
+    CREATE TABLE agent_results (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES agent_runs(id),
+        case_id TEXT NOT NULL,
+        category TEXT NOT NULL,
+        model TEXT NOT NULL,
+        position INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL,
+        passed INTEGER,
+        -- Share of the scenario's checks that passed, 0 to 1.
+        score REAL,
+        checks TEXT NOT NULL DEFAULT '[]',
+        trace TEXT NOT NULL DEFAULT '[]',
+        effects TEXT NOT NULL DEFAULT '{}',
+        answer TEXT,
+        stop_reason TEXT,
+        steps INTEGER,
+        tool_calls INTEGER,
+        invalid_calls INTEGER,
+        text_calls INTEGER,
+        prompt_tokens INTEGER,
+        output_tokens INTEGER,
+        queue_wait_ms REAL,
+        execution_ms REAL,
+        error_code TEXT,
+        error_detail TEXT,
+        finished_at TEXT,
+        UNIQUE (run_id, case_id, model)
+    );
+    CREATE INDEX agent_results_run ON agent_results(run_id, position);
+    """,
 ]
 
 
@@ -180,6 +221,9 @@ def _now() -> str:
 def _id() -> str:
     return uuid.uuid4().hex
 
+
+_RUNS = {"tool": "tool_runs", "agent": "agent_runs"}
+_RESULTS = {"tool": "tool_results", "agent": "agent_results"}
 
 # Failures caused by the environment, not by the prompt or the model: worth
 # running again once the cause is gone.
@@ -534,18 +578,33 @@ class Store:
             " WHERE status IN ('queued','running')",
             (_now(),),
         )
-        return cursor.rowcount + tool_cursor.rowcount
+        agent_cursor = self._db.execute(
+            "UPDATE agent_results SET status='failed', error_code='interrupted',"
+            " error_detail='The backend stopped before this scenario finished', finished_at=?"
+            " WHERE status IN ('queued','running')",
+            (_now(),),
+        )
+        return cursor.rowcount + tool_cursor.rowcount + agent_cursor.rowcount
 
-    # ---- tool-calling runs ----
+    # ---- tool-calling and agent runs ----
+    # Both kinds share one shape: a run of test cases on several models, one
+    # result row per (case, model). `kind` picks the tables.
 
     def create_tool_run(
-        self, suite: str, name: str, models: list[str], think: bool, cases: list[tuple[str, str]]
+        self,
+        suite: str,
+        name: str,
+        models: list[str],
+        think: bool,
+        cases: list[tuple[str, str]],
+        *,
+        kind: str = "tool",
     ) -> str:
         """Store a run: every (case, model) pair starts queued. `cases` is (id, category)."""
         run_id = _id()
         with self._transaction():
             self._db.execute(
-                "INSERT INTO tool_runs (id, suite, name, models, think, created_at)"
+                f"INSERT INTO {_RUNS[kind]} (id, suite, name, models, think, created_at)"
                 " VALUES (?,?,?,?,?,?)",
                 (run_id, suite, name, json.dumps(models), int(think), _now()),
             )
@@ -553,15 +612,15 @@ class Store:
             for case_id, category in cases:
                 for model in models:
                     self._db.execute(
-                        "INSERT INTO tool_results (id, run_id, case_id, category, model,"
+                        f"INSERT INTO {_RESULTS[kind]} (id, run_id, case_id, category, model,"
                         " position, status) VALUES (?,?,?,?,?,?, 'queued')",
                         (_id(), run_id, case_id, category, model, position),
                     )
                     position += 1
         return run_id
 
-    def tool_run(self, run_id: str) -> dict | None:
-        row = self._db.execute("SELECT * FROM tool_runs WHERE id = ?", (run_id,)).fetchone()
+    def tool_run(self, run_id: str, *, kind: str = "tool") -> dict | None:
+        row = self._db.execute(f"SELECT * FROM {_RUNS[kind]} WHERE id = ?", (run_id,)).fetchone()
         if row is None:
             return None
         run = dict(row)
@@ -569,15 +628,17 @@ class Store:
         run["think"] = bool(run["think"])
         return run
 
-    def list_tool_runs(self) -> list[dict]:
+    def list_tool_runs(self, *, kind: str = "tool") -> list[dict]:
         runs = [
-            self.tool_run(r["id"])
-            for r in self._db.execute("SELECT id FROM tool_runs ORDER BY created_at DESC")
+            self.tool_run(r["id"], kind=kind)
+            for r in self._db.execute(f"SELECT id FROM {_RUNS[kind]} ORDER BY created_at DESC")
         ]
         return [r for r in runs if r]
 
-    def tool_results(self, run_id: str, status: str | None = None) -> list[dict]:
-        sql = "SELECT * FROM tool_results WHERE run_id = ?"
+    def tool_results(
+        self, run_id: str, status: str | None = None, *, kind: str = "tool"
+    ) -> list[dict]:
+        sql = f"SELECT * FROM {_RESULTS[kind]} WHERE run_id = ?"
         params: tuple = (run_id,)
         if status:
             sql += " AND status = ?"
@@ -587,13 +648,15 @@ class Store:
             if row["model"] in self.hidden:
                 continue
             item = dict(row)
-            item["calls"] = json.loads(item["calls"])
+            for column in ("calls", "checks", "trace", "effects"):
+                if isinstance(item.get(column), str):
+                    item[column] = json.loads(item[column])
             item["passed"] = None if item["passed"] is None else bool(item["passed"])
             results.append(item)
         return results
 
-    def mark_tool_running(self, result_id: str) -> None:
-        self._db.execute("UPDATE tool_results SET status='running' WHERE id = ?", (result_id,))
+    def mark_tool_running(self, result_id: str, *, kind: str = "tool") -> None:
+        self._db.execute(f"UPDATE {_RESULTS[kind]} SET status='running' WHERE id = ?", (result_id,))
 
     def finish_tool_result(
         self,
@@ -630,19 +693,32 @@ class Store:
             ),
         )
 
-    def fail_tool_result(self, result_id: str, code: str, detail: str) -> None:
+    def finish_agent_result(self, result_id: str, **values) -> None:
+        """Record a finished scenario. JSON columns are given as Python objects."""
+        for column in ("checks", "trace", "effects"):
+            values[column] = json.dumps(values[column], ensure_ascii=False)
+        values["passed"] = int(values["passed"])
+        columns = ", ".join(f"{name}=?" for name in values)
         self._db.execute(
-            "UPDATE tool_results SET status='failed', error_code=?, error_detail=?,"
+            f"UPDATE agent_results SET status='completed', {columns}, finished_at=? WHERE id = ?",
+            (*values.values(), _now(), result_id),
+        )
+
+    def fail_tool_result(
+        self, result_id: str, code: str, detail: str, *, kind: str = "tool"
+    ) -> None:
+        self._db.execute(
+            f"UPDATE {_RESULTS[kind]} SET status='failed', error_code=?, error_detail=?,"
             " finished_at=? WHERE id = ?",
             (code, detail, _now(), result_id),
         )
 
-    def requeue_tool_run(self, run_id: str) -> int:
+    def requeue_tool_run(self, run_id: str, *, kind: str = "tool") -> int:
         """Queue again what an interrupted run left undone: cases that never
         finished and failures caused by the environment, not the model."""
         marks = ",".join("?" * len(RESUMABLE_CODES))
         cursor = self._db.execute(
-            "UPDATE tool_results SET status='queued', error_code=NULL, error_detail=NULL,"
+            f"UPDATE {_RESULTS[kind]} SET status='queued', error_code=NULL, error_detail=NULL,"
             " finished_at=NULL WHERE run_id = ? AND (status = 'queued' OR"
             f" (status='failed' AND error_code IN ({marks})))",
             (run_id, *RESUMABLE_CODES),
@@ -668,6 +744,7 @@ class Store:
             row["model"]
             for row in self._db.execute(
                 "SELECT model FROM executions UNION SELECT model FROM tool_results"
+                " UNION SELECT model FROM agent_results"
             )
         }
 
@@ -740,17 +817,17 @@ class Store:
             ]
         return list(dict.fromkeys(missing + requeued))
 
-    def tool_coverage(self) -> dict[str, dict[str, dict]]:
+    def tool_coverage(self, *, kind: str = "tool") -> dict[str, dict[str, dict]]:
         """model -> tool run id -> cases passed, wrong, failed and waiting."""
         coverage: dict[str, dict[str, dict]] = defaultdict(dict)
         for row in self._db.execute(
-            """
+            f"""
             SELECT model, run_id,
               SUM(status = 'completed' AND passed = 1) AS passed,
               SUM(status = 'completed' AND passed = 0) AS wrong,
               SUM(status = 'failed') AS failed,
               SUM(status IN ('queued','running')) AS waiting
-            FROM tool_results GROUP BY model, run_id
+            FROM {_RESULTS[kind]} GROUP BY model, run_id
             """
         ):
             coverage[row["model"]][row["run_id"]] = {
@@ -758,26 +835,28 @@ class Store:
             }
         return coverage
 
-    def add_model_to_tool_run(self, run_id: str, model: str, cases: list[tuple[str, str]]) -> int:
+    def add_model_to_tool_run(
+        self, run_id: str, model: str, cases: list[tuple[str, str]], *, kind: str = "tool"
+    ) -> int:
         """Queue `model` on every case of the run it lacks, plus its failures caused
         by the environment. Returns how many cases were queued."""
         with self._transaction():
-            run = self._db.execute("SELECT models FROM tool_runs WHERE id = ?", (run_id,))
+            run = self._db.execute(f"SELECT models FROM {_RUNS[kind]} WHERE id = ?", (run_id,))
             models = json.loads(run.fetchone()["models"])
             if model not in models:
                 self._db.execute(
-                    "UPDATE tool_runs SET models = ? WHERE id = ?",
+                    f"UPDATE {_RUNS[kind]} SET models = ? WHERE id = ?",
                     (json.dumps([*models, model]), run_id),
                 )
             have = {
                 row["case_id"]
                 for row in self._db.execute(
-                    "SELECT case_id FROM tool_results WHERE run_id = ? AND model = ?",
+                    f"SELECT case_id FROM {_RESULTS[kind]} WHERE run_id = ? AND model = ?",
                     (run_id, model),
                 )
             }
             position = self._db.execute(
-                "SELECT COALESCE(MAX(position), -1) + 1 FROM tool_results WHERE run_id = ?",
+                f"SELECT COALESCE(MAX(position), -1) + 1 FROM {_RESULTS[kind]} WHERE run_id = ?",
                 (run_id,),
             ).fetchone()[0]
             added = 0
@@ -785,7 +864,7 @@ class Store:
                 if case_id in have:
                     continue
                 self._db.execute(
-                    "INSERT INTO tool_results (id, run_id, case_id, category, model,"
+                    f"INSERT INTO {_RESULTS[kind]} (id, run_id, case_id, category, model,"
                     " position, status) VALUES (?,?,?,?,?,?, 'queued')",
                     (_id(), run_id, case_id, category, model, position),
                 )
@@ -793,16 +872,17 @@ class Store:
                 added += 1
             marks = ",".join("?" * len(RESUMABLE_CODES))
             requeued = self._db.execute(
-                "UPDATE tool_results SET status='queued', error_code=NULL, error_detail=NULL,"
+                f"UPDATE {_RESULTS[kind]} SET status='queued', error_code=NULL, error_detail=NULL,"
                 " finished_at=NULL WHERE run_id = ? AND model = ? AND status='failed'"
                 f" AND error_code IN ({marks})",
                 (run_id, model, *RESUMABLE_CODES),
             ).rowcount
         return added + requeued
 
-    def latest_tool_run(self, suite: str) -> str | None:
+    def latest_tool_run(self, suite: str, *, kind: str = "tool") -> str | None:
         row = self._db.execute(
-            "SELECT id FROM tool_runs WHERE suite = ? ORDER BY created_at DESC LIMIT 1", (suite,)
+            f"SELECT id FROM {_RUNS[kind]} WHERE suite = ? ORDER BY created_at DESC LIMIT 1",
+            (suite,),
         ).fetchone()
         return row["id"] if row else None
 

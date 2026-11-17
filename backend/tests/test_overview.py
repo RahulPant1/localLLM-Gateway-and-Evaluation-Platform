@@ -77,7 +77,10 @@ def test_scores_and_router_check(client):
     assert evaluation["scored"] == 3 and evaluation["unscored"] == 1
     assert evaluation["judges"] == ["claude-code"]
     rows = {row["model"]: row for row in evaluation["by_model"]}
-    assert rows["small:1b"]["overall"] == 7.0 and rows["small:1b"]["evaluated"] == 2
+    # Ranked only on the prompt both models have scores for.
+    assert (evaluation["compared_prompts"], evaluation["scored_prompts"]) == (1, 2)
+    assert rows["small:1b"]["overall"] == 9.0 and rows["small:1b"]["evaluated"] == 1
+    assert rows["small:1b"]["scored_total"] == 2
     assert rows["thinker:8b"]["critical_issues"] == 1
     assert rows["thinker:8b"]["dimensions"]["groundedness"] is None
     # Only prompt 1 has the pick and another model both scored.
@@ -94,6 +97,30 @@ def test_scores_and_router_check(client):
         "best_fixed_mean": 7.0,
         "best_possible_mean": 8.5,
     }
+
+
+def test_a_rescore_replaces_and_two_judges_count_once_per_answer(client):
+    batch = wait_batch(client, make_batch(client, prompts=["alpha", "beta"])["id"])
+    ids = [{e["model"]: e["id"] for e in r["executions"]} for r in batch["requests"]]
+    for answer in ids:
+        judge(client, answer["small:1b"], 8)
+        judge(client, answer["thinker:8b"], 8)
+    # The same judge scores one answer again: the new score replaces the old one.
+    judge(client, ids[0]["small:1b"], 4)
+    # A second judge scores one answer: averaged with the first judge, counted once.
+    second = {
+        "execution_id": ids[1]["thinker:8b"],
+        "judge": "other-judge",
+        "scores": scores(6),
+    }
+    assert client.post("/api/evaluations", json={"evaluations": [second]}).status_code == 201
+
+    evaluation = client.get("/api/overview").json()["evaluation"]
+    rows = {row["model"]: row for row in evaluation["by_model"]}
+    assert evaluation["compared_prompts"] == 2
+    assert rows["small:1b"]["overall"] == 6.0  # (4 + 8) / 2
+    assert rows["thinker:8b"]["overall"] == 7.5  # (8 + (8 + 6) / 2) / 2
+    assert rows["small:1b"]["evaluated"] == rows["thinker:8b"]["evaluated"] == 2
 
 
 def test_days_filter_and_validation(client):

@@ -83,7 +83,10 @@ class GroupRow(BaseModel):
 
 class ModelScore(BaseModel):
     model: str
+    # Prompts this row is computed from (the shared prompts when comparable).
     evaluated: int
+    # Every scored answer from this model, shared or not.
+    scored_total: int = 0
     overall: float | None
     dimensions: dict[str, float | None]
     critical_issues: int
@@ -124,6 +127,14 @@ class EvaluationOverview(BaseModel):
     scored: int
     unscored: int
     judges: list[str]
+    # Prompts with a score for every model in the comparison. The leaderboard and
+    # the task grids use only these, so every model is judged on the same prompts.
+    compared_prompts: int = 0
+    # Prompts with a score for at least one model.
+    scored_prompts: int = 0
+    # False when no prompt has a score for every model: rows then use each
+    # model's own prompts and are not directly comparable.
+    comparable: bool = True
     by_model: list[ModelScore]
     # Rows by the judge's task type and domain; `models` lists every scored model.
     models: list[str]
@@ -176,9 +187,28 @@ def _warm_rate(executions: list[Execution]) -> float | None:
     return round(sum(known) / len(known), 3) if known else None
 
 
+def _latest(execution: Execution) -> list:
+    """One evaluation per judge: the most recent. A judge scoring an answer
+    again replaces its earlier score instead of being counted twice."""
+    latest: dict[str, object] = {}
+    for evaluation in sorted(execution.evaluations, key=lambda v: v.created_at):
+        if evaluation.status == "completed":
+            latest[evaluation.judge] = evaluation
+    return list(latest.values())
+
+
 def _score(execution: Execution) -> float | None:
-    """Mean overall score across judges."""
-    return _mean([v.overall_score for v in execution.evaluations if v.overall_score is not None])
+    """The answer's overall score: the mean of each judge's latest score."""
+    return _mean([v.overall_score for v in _latest(execution) if v.overall_score is not None])
+
+
+def _scored_answers(request: RequestRecord) -> dict[str, Execution]:
+    """model -> its scored answer to this prompt (the latest attempt that was scored)."""
+    found: dict[str, Execution] = {}
+    for execution in request.executions:
+        if execution.status == "completed" and _score(execution) is not None:
+            found[execution.model] = execution
+    return found
 
 
 def _routing(requests: list[RequestRecord]) -> RoutingOverview:
@@ -257,7 +287,7 @@ def _router_check(requests: list[RequestRecord]) -> RouterCheck:
         decision = request.routing
         if decision is None or not decision.selected_model:
             continue
-        scores = {e.model: s for e in request.executions if (s := _score(e)) is not None}
+        scores = {m: _score(e) for m, e in _scored_answers(request).items()}
         if len(scores) >= 2 and decision.selected_model in scores:
             compared.append((decision.selected_model, scores))
 
@@ -294,7 +324,7 @@ def _task_rows(requests: list[RequestRecord], field: str, labels: dict[str, str]
     scores: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
     prompts: Counter = Counter()
     for request in requests:
-        scored = {e.model: s for e in request.executions if (s := _score(e)) is not None}
+        scored = {m: _score(e) for m, e in _scored_answers(request).items()}
         if not scored:
             continue
         key = _label_of(request, field)
@@ -324,7 +354,6 @@ def _task_rows(requests: list[RequestRecord], field: str, labels: dict[str, str]
 
 
 def _evaluation(requests: list[RequestRecord]) -> EvaluationOverview:
-    by_model: dict[str, list] = defaultdict(list)
     judges: set[str] = set()
     scored = unscored = 0
     for request in requests:
@@ -336,23 +365,40 @@ def _evaluation(requests: list[RequestRecord]) -> EvaluationOverview:
             elif request.parent_execution_id is None:
                 # Follow-up answers are not sent to judges, so they are not "unscored".
                 unscored += 1
-            for evaluation in execution.evaluations:
-                by_model[execution.model].append(evaluation)
-                judges.add(evaluation.judge)
+            judges.update(v.judge for v in execution.evaluations)
+
+    # Rank models on the same prompts only: a model scored on an easier set,
+    # or on more judges, would otherwise look better or worse than it is.
+    answers = {r.id: _scored_answers(r) for r in requests}
+    scored_requests = [r for r in requests if answers[r.id]]
+    models = sorted({m for found in answers.values() for m in found})
+    shared = [r for r in scored_requests if set(answers[r.id]) >= set(models)]
+    comparable = bool(shared)
+    basis = shared if comparable else scored_requests
+
+    totals = Counter(m for r in scored_requests for m in answers[r.id])
+    per_model: dict[str, list[Execution]] = defaultdict(list)
+    for request in basis:
+        for model, execution in answers[request.id].items():
+            per_model[model].append(execution)
 
     rows = []
-    for model, evaluations in by_model.items():
+    for model, executions in per_model.items():
+        evaluations = [v for e in executions for v in _latest(e)]
         dimensions = {}
         for name in DIMENSIONS:
-            values = [getattr(v.scores, name) for v in evaluations]
-            dimensions[name] = _mean([v for v in values if v is not None])
+            # Per answer first (across judges), then across answers.
+            per_answer = [
+                _mean([x for v in _latest(e) if (x := getattr(v.scores, name)) is not None])
+                for e in executions
+            ]
+            dimensions[name] = _mean([x for x in per_answer if x is not None])
         rows.append(
             ModelScore(
                 model=model,
-                evaluated=len(evaluations),
-                overall=_mean(
-                    [v.overall_score for v in evaluations if v.overall_score is not None]
-                ),
+                evaluated=len(executions),
+                scored_total=totals[model],
+                overall=_mean([s for e in executions if (s := _score(e)) is not None]),
                 dimensions=dimensions,
                 critical_issues=sum(len(v.critical_issues) for v in evaluations),
             )
@@ -362,10 +408,13 @@ def _evaluation(requests: list[RequestRecord]) -> EvaluationOverview:
         scored=scored,
         unscored=unscored,
         judges=sorted(judges),
+        compared_prompts=len(shared),
+        scored_prompts=len(scored_requests),
+        comparable=comparable,
         by_model=rows,
-        models=sorted(by_model),
-        by_task=_task_rows(requests, "task_type", TASK_TYPE_LABELS),
-        by_domain=_task_rows(requests, "domain", DOMAIN_LABELS),
+        models=models,
+        by_task=_task_rows(basis, "task_type", TASK_TYPE_LABELS),
+        by_domain=_task_rows(basis, "domain", DOMAIN_LABELS),
         router_check=_router_check(requests),
     )
 

@@ -232,9 +232,14 @@ export interface Overview {
     scored: number;
     unscored: number;
     judges: string[];
+    // Prompts every model has a score for; the leaderboard and task grid use only these.
+    compared_prompts: number;
+    scored_prompts: number;
+    comparable: boolean;
     by_model: {
       model: string;
       evaluated: number;
+      scored_total: number;
       overall: number | null;
       dimensions: Record<string, number | null>;
       critical_issues: number;

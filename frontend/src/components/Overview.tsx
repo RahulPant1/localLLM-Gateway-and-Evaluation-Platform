@@ -217,7 +217,7 @@ function RequestsPanel({ data }: { data: OverviewData }) {
             <thead>
               <tr>
                 <th>{by === "model" ? "Model" : "Task"}</th>
-                <th className="num">Answers</th>
+                <th className="num" title="Prompts this row is computed from">Prompts</th>
                 <th className="num">Typical</th>
                 <th className="num">Slowest</th>
                 <th>Status</th>
@@ -300,7 +300,8 @@ function TaskPanel({ data }: { data: OverviewData }) {
         <>
           <p className="muted small">
             {e.scored} answers scored by {e.judges.join(", ")}
-            {e.unscored > 0 && `, ${e.unscored} not yet`}. The judge assigns the {by === "task" ? "task type" : "domain"}{" "}
+            {e.unscored > 0 && `, ${e.unscored} not yet`}.{" "}
+            {e.comparable && e.compared_prompts < e.scored_prompts && `Uses the ${e.compared_prompts} prompts every model has a score for.`} The judge assigns the {by === "task" ? "task type" : "domain"}{" "}
             to each prompt.
           </p>
           <div className="table-wrap">
@@ -366,6 +367,29 @@ function TaskPanel({ data }: { data: OverviewData }) {
   );
 }
 
+/** What the scores are computed from, so a partly judged model cannot mislead. */
+function ComparisonBasis({ data }: { data: OverviewData }) {
+  const e = data.evaluation;
+  if (e.by_model.length < 2) return null;
+  const left = e.scored_prompts - e.compared_prompts;
+  if (!e.comparable)
+    return (
+      <p className="error small">
+        No prompt has scores for every model yet, so each model is scored on its own prompts and the rows are not
+        comparable. Judge the missing answers (see the Models tab) to compare them.
+      </p>
+    );
+  return (
+    <p className="muted small">
+      Every model is compared on the same {e.compared_prompts} prompts: those each of them has a score for.
+      {left > 0 &&
+        ` ${left} other scored prompt${left === 1 ? " is" : "s are"} left out because some models have no score on ${left === 1 ? "it" : "them"}.`}{" "}
+      A judge's newer score on an answer replaces its older one, and an answer scored by several judges counts once,
+      with their scores averaged.
+    </p>
+  );
+}
+
 /** Models ranked by overall score, with each rubric dimension. */
 function LeaderboardPanel({ data }: { data: OverviewData }) {
   const e = data.evaluation;
@@ -379,6 +403,7 @@ function LeaderboardPanel({ data }: { data: OverviewData }) {
       <h2>
         Model leaderboard <span className="muted">· overall score out of 10</span>
       </h2>
+      <ComparisonBasis data={data} />
       <div className="table-wrap">
         <table className="matrix eval-table">
           <thead>
@@ -391,7 +416,7 @@ function LeaderboardPanel({ data }: { data: OverviewData }) {
                   {DIMENSION_TEXT[name]}
                 </th>
               ))}
-              <th className="num">Answers</th>
+              <th className="num" title="Prompts this row is computed from">Prompts</th>
               <th className="num">Critical issues</th>
             </tr>
           </thead>
@@ -413,7 +438,16 @@ function LeaderboardPanel({ data }: { data: OverviewData }) {
                     {row.dimensions[name]?.toFixed(1) ?? "-"}
                   </td>
                 ))}
-                <td className="num">{row.evaluated}</td>
+                <td
+                  className="num"
+                  title={
+                    row.scored_total > row.evaluated
+                      ? `${row.scored_total - row.evaluated} more scored answers are on prompts not every model has scores for`
+                      : undefined
+                  }
+                >
+                  {row.evaluated}
+                </td>
                 <td className="num">
                   {row.critical_issues > 0 ? <span className="pill bad">{row.critical_issues}</span> : "0"}
                 </td>

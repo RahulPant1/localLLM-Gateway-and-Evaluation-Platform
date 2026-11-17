@@ -35,8 +35,10 @@ uv run pytest -m live     # real Ollama; loads a model
 - **Overview**: totals for routing, local performance, requests and evaluation scores (see below).
 - **Workspace**: one prompt on one model, or on several to compare them.
 - **Batch runs**: many prompts on many models, with a results grid and export.
+- **Tool use**: can each model call functions correctly? Scored automatically (see below).
 - **History**: past single and comparison requests.
 - **Evaluate**: hand stored outputs to a judge and store the scores.
+- **Models**: the lineup. Add a new model to every existing test, or hide one (see below).
 
 ## Overview
 
@@ -52,6 +54,26 @@ From top to bottom:
 - **Requests**: answers, typical (median) and slowest time, failures and tokens, per model or per task type. Manual requests have no task type and appear as "Not routed".
 
 To fill it with a meaningful sample, paste [sample_batch_prompts.txt](sample_batch_prompts.txt) (28 prompts, four per task type) into **Batch runs**, run it on all models, then judge it in the **Evaluate** tab.
+
+## Adding or hiding a model
+
+The **Models** tab lists every installed model, and every model that has stored results, with how much of each test it has done: per batch, prompts answered, failed and judged; per tool-use run, cases done and the share correct.
+
+- **Run all tests** appears when a model has not done everything. It runs the model on every prompt of every existing batch, and every case of the latest tool-use run, that it has not done yet, and queues again its earlier failures caused by the environment (timeouts, low memory, interruptions). The new answers appear in the same batch grids and tool-use tables as the other models'. Batches that are still running are skipped; try again when they finish. Batches and tool-use runs take turns as whole jobs (one finishes before the next starts), so two of them never swap models on every call; single prompts from the Workspace or the `/v1` endpoint still get a turn in between. Models without tool support skip the tool-use tests.
+- Tool-use cases are scored as soon as they finish. Batch answers need a judge: the tab shows how many are waiting, with a link to **Evaluate**. With Claude Code, `/evaluate-batch "<batch name>"` judges only what is not scored yet. Once the scores are stored, the Overview includes the new model.
+- **Hide** takes a model and all its results out of every screen, export and count, out of the model pickers and out of automatic routing. Nothing is deleted. Hidden models are listed at the bottom of the tab; **Restore** brings the model and every result back. Running all tests on a hidden model restores it first.
+
+## Tool use (function calling)
+
+The **Tool use** tab tests whether a model can call functions. Each case gives the model a request and one or more function definitions (sent through Ollama's `tools` field, with no system prompt). The model must call the right function with the right arguments, call several when the request needs it, or make no call when nothing fits.
+
+The cases are a fixed sample of the Berkeley Function Calling Leaderboard (BFCL v3, Apache-2.0): 10 each of *simple* (one function), *multiple* (pick one of several), *parallel* (several calls at once) and *irrelevance* (no function fits). They are in `config/tool_suites/bfcl_v1.json`, built by `backend/scripts/build_toolcall_set.py` with seed 2026.
+
+Scoring is automatic and follows BFCL's checks: the name must match, required arguments must be present with an accepted value, no undefined argument may appear, and numbers compare by value but a number sent as text is wrong. Text compares without case or punctuation. Parallel calls may come in any order.
+
+Some models write the call as JSON in their answer instead of using the tool-call field. Those calls are still scored, but marked: the **Proper format** column shows the share of correct calls that came through the real field, which is what an application or agent framework needs.
+
+Thinking is off by default. Models that cannot switch it off (deepseek-r1) get 4,096 output tokens instead of 1,024, so they are not cut off before answering. Models without tool support (MedGemma) are not offered.
 
 ## Answers appear while they are written
 

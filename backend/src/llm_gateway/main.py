@@ -15,6 +15,7 @@ from llm_gateway.api import router as runs_router
 from llm_gateway.catalog import ModelCatalog
 from llm_gateway.config import PROJECT_ROOT, Settings, get_settings
 from llm_gateway.execution import ExecutionQueue, MemoryGuard, QueueState
+from llm_gateway.lineup import router as lineup_router
 from llm_gateway.openai_api import router as openai_router
 from llm_gateway.providers.base import (
     GenerationFailed,
@@ -40,6 +41,9 @@ from llm_gateway.system import (
     gpu_status,
     memory_mb,
 )
+from llm_gateway.tooluse.api import router as tool_use_router
+from llm_gateway.tooluse.runner import ToolRunner
+from llm_gateway.tooluse.suites import load_suites
 
 
 class HealthResponse(BaseModel):
@@ -160,7 +164,7 @@ def create_app(provider: ModelProvider | None = None, settings: Settings | None 
         store.fail_unfinished()
         store.fail_unrouted()
         app.state.provider = active
-        app.state.catalog = ModelCatalog(active)
+        app.state.catalog = ModelCatalog(active, hidden=lambda: store.hidden)
         app.state.queue = ExecutionQueue(active, MemoryGuard(active, config.min_free_memory_mb))
         app.state.store = store
         app.state.settings = config
@@ -177,8 +181,11 @@ def create_app(provider: ModelProvider | None = None, settings: Settings | None 
         app.state.runner = Runner(
             store, active, app.state.catalog, app.state.queue, app.state.router
         )
+        app.state.tool_suites = load_suites(config.tool_suites_dir)
+        app.state.tool_runner = ToolRunner(store, active, app.state.catalog, app.state.queue)
         yield
         await app.state.runner.shutdown()
+        await app.state.tool_runner.shutdown()
         store.close()
         if client is not None:
             await client.aclose()
@@ -188,6 +195,8 @@ def create_app(provider: ModelProvider | None = None, settings: Settings | None 
         app.dependency_overrides[get_settings] = lambda: settings
     app.include_router(runs_router)
     app.include_router(openai_router)
+    app.include_router(tool_use_router)
+    app.include_router(lineup_router)
 
     @app.exception_handler(ProviderError)
     async def provider_error(_: Request, exc: ProviderError) -> JSONResponse:

@@ -22,6 +22,7 @@ from llm_gateway.providers.base import (
     ModelProvider,
     OnDelta,
     ProviderError,
+    ToolTurn,
 )
 from llm_gateway.system import memory_available_mb
 
@@ -114,6 +115,11 @@ class ExecutionQueue:
         self._provider = provider
         self._guard = memory_guard
         self._lock = asyncio.Lock()
+        # Long background jobs (a batch, a tool-use run) hold this for their whole
+        # length, so two of them never alternate generation by generation, which
+        # would swap models on every call. Single prompts do not take it, so they
+        # still get a turn between a job's generations.
+        self.long_jobs = asyncio.Lock()
         self._waiting = 0
         self._running_model: str | None = None
 
@@ -125,6 +131,33 @@ class ExecutionQueue:
             memory_unloads=self._guard.unloads if self._guard else 0,
         )
 
+    async def _exclusive(self, model_name: str, work):
+        """Wait for a turn, run `work()` alone on the GPU, and time it.
+        Returns (result, started_at, queue_wait_ms, execution_ms, free_mb)."""
+        enqueued = time.perf_counter()
+        self._waiting += 1
+        try:
+            await self._lock.acquire()
+        finally:
+            self._waiting -= 1
+        try:
+            self._running_model = model_name
+            free_mb = await self._guard.check() if self._guard else None
+            started_at = datetime.now(UTC)
+            start = time.perf_counter()
+            result = await work()
+            end = time.perf_counter()
+        finally:
+            self._running_model = None
+            self._lock.release()
+        return (
+            result,
+            started_at,
+            round((start - enqueued) * 1000, 1),
+            round((end - start) * 1000, 1),
+            free_mb,
+        )
+
     async def run(
         self,
         request: GenerationRequest,
@@ -134,31 +167,45 @@ class ExecutionQueue:
     ) -> ExecutionRecord:
         """Wait for a turn, then generate. `on_start` is called when the turn
         begins; `on_delta` receives the answer piece by piece."""
-        enqueued = time.perf_counter()
-        self._waiting += 1
-        try:
-            await self._lock.acquire()
-        finally:
-            self._waiting -= 1
-        try:
-            self._running_model = model.name
-            free_mb = await self._guard.check() if self._guard else None
+
+        async def work() -> GenerationResult:
             if on_start:
                 on_start()
-            started_at = datetime.now(UTC)
-            start = time.perf_counter()
             if on_delta is None:
-                result = await self._provider.generate(request, model)
-            else:
-                result = await self._provider.generate(request, model, on_delta=on_delta)
-            end = time.perf_counter()
-        finally:
-            self._running_model = None
-            self._lock.release()
+                return await self._provider.generate(request, model)
+            return await self._provider.generate(request, model, on_delta=on_delta)
+
+        result, started_at, queue_wait_ms, execution_ms, free_mb = await self._exclusive(
+            model.name, work
+        )
         return ExecutionRecord(
             result=result,
             started_at=started_at,
-            queue_wait_ms=round((start - enqueued) * 1000, 1),
-            execution_ms=round((end - start) * 1000, 1),
+            queue_wait_ms=queue_wait_ms,
+            execution_ms=execution_ms,
             memory_available_mb=free_mb,
         )
+
+    async def run_tool_turn(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        model: ModelInfo,
+        *,
+        think: bool | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> tuple[ToolTurn, float, float]:
+        """One tool-calling turn. Returns the turn, queue wait and execution time in ms."""
+        turn, _, queue_wait_ms, execution_ms, _ = await self._exclusive(
+            model.name,
+            lambda: self._provider.chat(
+                messages,
+                tools,
+                model,
+                think=think,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            ),
+        )
+        return turn, queue_wait_ms, execution_ms

@@ -113,6 +113,29 @@ class GenerationResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class ToolCall(BaseModel):
+    name: str
+    # What the model supplied. Kept as returned, so wrong types stay visible.
+    arguments: dict = Field(default_factory=dict)
+    # Set when the model sent arguments that are not a JSON object.
+    malformed: bool = False
+
+
+class ToolTurn(BaseModel):
+    """One model turn in a tool-calling conversation: text, calls, or both."""
+
+    model: str
+    content: str = ""
+    thinking: str | None = None
+    tool_calls: list[ToolCall] = Field(default_factory=list)
+    done_reason: str | None = None
+    num_ctx: int
+    prompt_tokens: int | None = None
+    output_tokens: int | None = None
+    generation_ms: float | None = None
+    tokens_per_second: float | None = None
+
+
 # Called with ("thinking" | "content", text) for each piece of a streamed answer.
 OnDelta = Callable[[str, str], None]
 
@@ -145,3 +168,21 @@ class ModelProvider(ABC):
         With `on_delta`, the answer is also reported piece by piece while it
         is generated; the returned result is the same either way.
         """
+
+    async def chat(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        model: ModelInfo,
+        *,
+        think: bool | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> ToolTurn:
+        """One turn of a conversation in which the model may call `tools`.
+
+        `messages` use the common chat shape (role/content, plus `tool_calls`
+        on assistant turns and role "tool" for results). Providers without
+        tool support leave this unimplemented.
+        """
+        raise GenerationFailed(f"{self.name} does not support tool calling")

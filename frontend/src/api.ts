@@ -311,7 +311,111 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+export interface ToolSuite {
+  id: string;
+  title: string;
+  source: string;
+  case_count: number;
+  categories: Record<string, { description: string; cases: number }>;
+}
+
+export interface Tally {
+  passed: number;
+  // Of those, calls sent in the proper tool-call field (the rest were JSON written in the answer).
+  passed_native: number;
+  wrong: number;
+  errors: number;
+  waiting: number;
+}
+
+export interface ModelTally extends Tally {
+  model: string;
+  by_category: Record<string, Tally>;
+  mean_ms: number | null;
+}
+
+export interface ToolRunSummary {
+  id: string;
+  suite: string;
+  name: string;
+  models: string[];
+  think: boolean;
+  created_at: string;
+  total: number;
+  finished: number;
+  running: boolean;
+  per_model: ModelTally[];
+}
+
+export interface ToolCallRecord {
+  name: string;
+  arguments: Record<string, unknown>;
+  malformed: boolean;
+}
+
+export interface ToolResult {
+  id: string;
+  case_id: string;
+  category: string;
+  model: string;
+  status: ExecutionStatus;
+  passed: boolean | null;
+  reason: string | null;
+  prompt: string;
+  tool_names: string[];
+  // Accepted calls: each argument maps to the list of accepted values ("" = may be left out).
+  expected: { name: string; arguments: Record<string, unknown[]> }[];
+  calls: ToolCallRecord[];
+  call_format: "native" | "text" | "none" | null;
+  content: string | null;
+  thinking: string | null;
+  error_code: string | null;
+  error_detail: string | null;
+  prompt_tokens: number | null;
+  output_tokens: number | null;
+  execution_ms: number | null;
+}
+
+export interface ToolRunDetail extends ToolRunSummary {
+  results: ToolResult[];
+}
+
+export interface LineupEntry {
+  name: string;
+  installed: boolean;
+  hidden: boolean;
+  tools: boolean;
+  size_bytes: number | null;
+  parameter_size: string | null;
+  capabilities: string[];
+  batches: Record<string, { answered: number; failed: number; waiting: number; judged: number }>;
+  tool_runs: Record<string, { passed: number; wrong: number; failed: number; waiting: number }>;
+  not_run: number;
+  unjudged: number;
+}
+
+export interface Lineup {
+  models: LineupEntry[];
+  batches: { id: string; name: string; prompts: number }[];
+  tool_runs: { id: string; name: string; suite: string; cases: number }[];
+  unjudged: number;
+}
+
 export const api = {
+  lineup: () => call<Lineup>("/api/lineup"),
+  hideModel: (model: string) => call<unknown>("/api/lineup/hide", { model }),
+  restoreModel: (model: string) => call<unknown>("/api/lineup/restore", { model }),
+  runAllTests: (model: string) =>
+    call<{ queued_answers: number; queued_tool_cases: number; notes: string[] }>(
+      "/api/lineup/run-all",
+      { model },
+    ),
+  toolSuites: () => call<ToolSuite[]>("/api/tool-use/suites"),
+  toolRuns: () => call<ToolRunSummary[]>("/api/tool-use/runs"),
+  toolRun: (id: string) => call<ToolRunDetail>(`/api/tool-use/runs/${id}`),
+  createToolRun: (body: { suite: string; models: string[]; think: boolean; name?: string }) =>
+    call<ToolRunSummary>("/api/tool-use/runs", body),
+  resumeToolRun: (id: string) => call<ToolRunSummary>(`/api/tool-use/runs/${id}/resume`, {}),
   status: () => call<SystemStatus>("/api/status"),
   models: () => call<{ provider: string; models: ModelEntry[] }>("/api/models"),
   // `models: null` asks the router to pick the model.

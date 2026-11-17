@@ -67,6 +67,15 @@ def _unique(names: list[str]) -> list[str]:
     return list(dict.fromkeys(names))
 
 
+def _refuse_hidden(store: Store, models: list[str]) -> None:
+    hidden = [m for m in models if m in store.hidden]
+    if hidden:
+        raise HTTPException(
+            409,
+            f"{', '.join(hidden)} is hidden. Restore it in the Models tab to use it again.",
+        )
+
+
 @router.post("/requests", status_code=201)
 async def create_request(body: RequestCreate, store: StoreDep, runner: RunnerDep) -> RequestRecord:
     """Save a prompt and run it in the background.
@@ -78,6 +87,7 @@ async def create_request(body: RequestCreate, store: StoreDep, runner: RunnerDep
     as a failed execution, not rejected, so the attempt stays in history.
     """
     automatic = body.models is None
+    _refuse_hidden(store, body.models or [])
     record = store.create_request(
         body,
         [] if automatic else _unique(body.models),
@@ -218,6 +228,7 @@ async def create_batch(
     models = _unique(body.models) if body.models else [m.name for m in await catalog.list()]
     if not models:
         raise HTTPException(409, "No models are installed")
+    _refuse_hidden(store, models)
     name = (body.name or "").strip() or f"Batch {datetime.now():%Y-%m-%d %H:%M}"
     batch_id = store.create_batch(
         name, prompts, models, think=body.think, max_tokens=body.max_tokens

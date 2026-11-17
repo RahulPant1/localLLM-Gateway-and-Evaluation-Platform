@@ -16,6 +16,8 @@ from llm_gateway.providers.base import (
     ModelProvider,
     OnDelta,
     ProviderUnavailable,
+    ToolCall,
+    ToolTurn,
 )
 
 NS_PER_MS = 1_000_000
@@ -213,6 +215,57 @@ class OllamaProvider(ModelProvider):
             ),
         )
 
+    async def chat(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        model: ModelInfo,
+        *,
+        think: bool | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> ToolTurn:
+        options: dict = {"num_ctx": model.num_ctx}
+        if max_tokens:
+            options["num_predict"] = max_tokens
+        if temperature is not None:
+            options["temperature"] = temperature
+        payload: dict = {
+            "model": model.name,
+            "messages": messages,
+            "tools": tools,
+            "stream": False,
+            "options": options,
+        }
+        if model.supports_thinking:
+            payload["think"] = True if think is None else think
+        try:
+            body, content, thinking = await self._chat_once(payload)
+        except httpx2.ConnectError as exc:
+            raise ProviderUnavailable(f"Cannot reach Ollama: {exc}") from exc
+        except httpx2.TimeoutException as exc:
+            raise GenerationTimeout(
+                f"{model.name} did not finish within {self._generation_timeout:g}s"
+            ) from exc
+        except httpx2.HTTPError as exc:
+            raise GenerationFailed(f"Connection to Ollama failed mid-generation: {exc}") from exc
+        eval_ns = body.get("eval_duration")
+        output_tokens = body.get("eval_count")
+        return ToolTurn(
+            model=model.name,
+            content=content,
+            thinking=thinking or None,
+            tool_calls=_tool_calls(body["message"].get("tool_calls")),
+            done_reason=body.get("done_reason"),
+            num_ctx=model.num_ctx,
+            prompt_tokens=body.get("prompt_eval_count"),
+            output_tokens=output_tokens,
+            generation_ms=_ms(eval_ns),
+            tokens_per_second=(
+                round(output_tokens / (eval_ns / 1e9), 1) if output_tokens and eval_ns else None
+            ),
+        )
+
     @staticmethod
     def _check_status(status_code: int, message: str) -> None:
         if status_code == 404:
@@ -265,6 +318,26 @@ class OllamaProvider(ModelProvider):
         if final is None:
             raise GenerationFailed("Ollama ended the answer without a final message")
         return final, "".join(content), "".join(thinking)
+
+
+def _tool_calls(raw: list[dict] | None) -> list[ToolCall]:
+    calls = []
+    for entry in raw or []:
+        function = entry.get("function") or {}
+        arguments = function.get("arguments")
+        malformed = False
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                arguments = {}
+                malformed = True
+        if not isinstance(arguments, dict):
+            arguments, malformed = {}, True
+        calls.append(
+            ToolCall(name=str(function.get("name", "")), arguments=arguments, malformed=malformed)
+        )
+    return calls
 
 
 def context_warnings(

@@ -290,3 +290,4 @@ progress { width: 160px; accent-color: var(--accent); }
 .score-line { display: grid; grid-template-columns: minmax(130px, 200px) 1fr 52px; align-items: center; gap: 12px; }
 .score-line-label { font-size: 13px; }
 .score-line-value { text-align: right; font-variant-numeric: tabular-nums; }
+.matrix td.actions { white-space: nowrap; }

@@ -127,6 +127,49 @@ MIGRATIONS = [
     """
     ALTER TABLE executions ADD COLUMN think INTEGER;
     """,
+    # 7: tool-calling test runs.
+    """
+    CREATE TABLE tool_runs (
+        id TEXT PRIMARY KEY,
+        suite TEXT NOT NULL,
+        name TEXT NOT NULL,
+        models TEXT NOT NULL,
+        think INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+    );
+    CREATE TABLE tool_results (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES tool_runs(id),
+        case_id TEXT NOT NULL,
+        category TEXT NOT NULL,
+        model TEXT NOT NULL,
+        position INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL,
+        calls TEXT NOT NULL DEFAULT '[]',
+        -- native: proper tool calls; text: calls written as JSON in the answer; none
+        call_format TEXT,
+        content TEXT,
+        thinking TEXT,
+        passed INTEGER,
+        reason TEXT,
+        error_code TEXT,
+        error_detail TEXT,
+        prompt_tokens INTEGER,
+        output_tokens INTEGER,
+        queue_wait_ms REAL,
+        execution_ms REAL,
+        finished_at TEXT,
+        UNIQUE (run_id, case_id, model)
+    );
+    CREATE INDEX tool_results_run ON tool_results(run_id, position);
+    """,
+    # 8: models taken out of the lineup. Their results stay stored but are not shown.
+    """
+    CREATE TABLE hidden_models (
+        model TEXT PRIMARY KEY,
+        hidden_at TEXT NOT NULL
+    );
+    """,
 ]
 
 
@@ -204,6 +247,10 @@ class Store:
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA foreign_keys=ON")
         self._migrate()
+        # Models out of the lineup. Every read below leaves out their results.
+        self.hidden: set[str] = {
+            row["model"] for row in self._db.execute("SELECT model FROM hidden_models")
+        }
 
     def close(self) -> None:
         self._db.close()
@@ -481,7 +528,283 @@ class Store:
             " WHERE status IN ('queued','running')",
             (_now(),),
         )
+        tool_cursor = self._db.execute(
+            "UPDATE tool_results SET status='failed', error_code='interrupted',"
+            " error_detail='The backend stopped before this case finished', finished_at=?"
+            " WHERE status IN ('queued','running')",
+            (_now(),),
+        )
+        return cursor.rowcount + tool_cursor.rowcount
+
+    # ---- tool-calling runs ----
+
+    def create_tool_run(
+        self, suite: str, name: str, models: list[str], think: bool, cases: list[tuple[str, str]]
+    ) -> str:
+        """Store a run: every (case, model) pair starts queued. `cases` is (id, category)."""
+        run_id = _id()
+        with self._transaction():
+            self._db.execute(
+                "INSERT INTO tool_runs (id, suite, name, models, think, created_at)"
+                " VALUES (?,?,?,?,?,?)",
+                (run_id, suite, name, json.dumps(models), int(think), _now()),
+            )
+            position = 0
+            for case_id, category in cases:
+                for model in models:
+                    self._db.execute(
+                        "INSERT INTO tool_results (id, run_id, case_id, category, model,"
+                        " position, status) VALUES (?,?,?,?,?,?, 'queued')",
+                        (_id(), run_id, case_id, category, model, position),
+                    )
+                    position += 1
+        return run_id
+
+    def tool_run(self, run_id: str) -> dict | None:
+        row = self._db.execute("SELECT * FROM tool_runs WHERE id = ?", (run_id,)).fetchone()
+        if row is None:
+            return None
+        run = dict(row)
+        run["models"] = [m for m in json.loads(run["models"]) if m not in self.hidden]
+        run["think"] = bool(run["think"])
+        return run
+
+    def list_tool_runs(self) -> list[dict]:
+        runs = [
+            self.tool_run(r["id"])
+            for r in self._db.execute("SELECT id FROM tool_runs ORDER BY created_at DESC")
+        ]
+        return [r for r in runs if r]
+
+    def tool_results(self, run_id: str, status: str | None = None) -> list[dict]:
+        sql = "SELECT * FROM tool_results WHERE run_id = ?"
+        params: tuple = (run_id,)
+        if status:
+            sql += " AND status = ?"
+            params = (run_id, status)
+        results = []
+        for row in self._db.execute(sql + " ORDER BY position", params):
+            if row["model"] in self.hidden:
+                continue
+            item = dict(row)
+            item["calls"] = json.loads(item["calls"])
+            item["passed"] = None if item["passed"] is None else bool(item["passed"])
+            results.append(item)
+        return results
+
+    def mark_tool_running(self, result_id: str) -> None:
+        self._db.execute("UPDATE tool_results SET status='running' WHERE id = ?", (result_id,))
+
+    def finish_tool_result(
+        self,
+        result_id: str,
+        *,
+        calls: list[dict],
+        call_format: str,
+        content: str,
+        thinking: str | None,
+        passed: bool,
+        reason: str,
+        prompt_tokens: int | None,
+        output_tokens: int | None,
+        queue_wait_ms: float,
+        execution_ms: float,
+    ) -> None:
+        self._db.execute(
+            "UPDATE tool_results SET status='completed', calls=?, call_format=?, content=?,"
+            " thinking=?, passed=?, reason=?, prompt_tokens=?, output_tokens=?, queue_wait_ms=?,"
+            " execution_ms=?, finished_at=? WHERE id = ?",
+            (
+                json.dumps(calls),
+                call_format,
+                content,
+                thinking,
+                int(passed),
+                reason,
+                prompt_tokens,
+                output_tokens,
+                queue_wait_ms,
+                execution_ms,
+                _now(),
+                result_id,
+            ),
+        )
+
+    def fail_tool_result(self, result_id: str, code: str, detail: str) -> None:
+        self._db.execute(
+            "UPDATE tool_results SET status='failed', error_code=?, error_detail=?,"
+            " finished_at=? WHERE id = ?",
+            (code, detail, _now(), result_id),
+        )
+
+    def requeue_tool_run(self, run_id: str) -> int:
+        """Queue again what an interrupted run left undone: cases that never
+        finished and failures caused by the environment, not the model."""
+        marks = ",".join("?" * len(RESUMABLE_CODES))
+        cursor = self._db.execute(
+            "UPDATE tool_results SET status='queued', error_code=NULL, error_detail=NULL,"
+            " finished_at=NULL WHERE run_id = ? AND (status = 'queued' OR"
+            f" (status='failed' AND error_code IN ({marks})))",
+            (run_id, *RESUMABLE_CODES),
+        )
         return cursor.rowcount
+
+    # ---- the model lineup ----
+
+    def set_hidden(self, model: str, hidden: bool) -> None:
+        """Take a model out of the lineup, or bring it back. Nothing is deleted."""
+        if hidden:
+            self._db.execute(
+                "INSERT OR IGNORE INTO hidden_models (model, hidden_at) VALUES (?,?)",
+                (model, _now()),
+            )
+            self.hidden.add(model)
+        else:
+            self._db.execute("DELETE FROM hidden_models WHERE model = ?", (model,))
+            self.hidden.discard(model)
+
+    def models_with_results(self) -> set[str]:
+        return {
+            row["model"]
+            for row in self._db.execute(
+                "SELECT model FROM executions UNION SELECT model FROM tool_results"
+            )
+        }
+
+    def batch_coverage(self) -> dict[str, dict[str, dict]]:
+        """model -> batch id -> prompts answered, failed, waiting and judged.
+        Counts prompts, not attempts, and ignores whether the model is hidden."""
+        coverage: dict[str, dict[str, dict]] = defaultdict(dict)
+        for row in self._db.execute(
+            """
+            SELECT e.model, r.batch_id,
+              COUNT(DISTINCT CASE WHEN e.status = 'completed' THEN r.id END) AS answered,
+              COUNT(DISTINCT CASE WHEN e.status IN ('queued','running') THEN r.id END) AS waiting,
+              COUNT(DISTINCT CASE WHEN e.status = 'completed' AND EXISTS
+                (SELECT 1 FROM evaluations v WHERE v.execution_id = e.id) THEN r.id END) AS judged,
+              COUNT(DISTINCT r.id) AS tried
+            FROM executions e JOIN requests r ON r.id = e.request_id
+            WHERE r.batch_id IS NOT NULL GROUP BY e.model, r.batch_id
+            """
+        ):
+            coverage[row["model"]][row["batch_id"]] = {
+                "answered": row["answered"],
+                "waiting": row["waiting"],
+                "judged": row["judged"],
+                # Tried but never answered (a failure that was not retried successfully).
+                "failed": row["tried"] - row["answered"] - row["waiting"],
+            }
+        return coverage
+
+    def add_model_to_batch(self, batch_id: str, model: str) -> list[str]:
+        """Queue `model` on every prompt of the batch it has not been run on, and
+        queue again its failures caused by the environment. Returns the request ids."""
+        with self._transaction():
+            batch = self._db.execute("SELECT models FROM batches WHERE id = ?", (batch_id,))
+            models = json.loads(batch.fetchone()["models"])
+            if model not in models:
+                self._db.execute(
+                    "UPDATE batches SET models = ? WHERE id = ?",
+                    (json.dumps([*models, model]), batch_id),
+                )
+            missing = [
+                row["id"]
+                for row in self._db.execute(
+                    "SELECT id FROM requests WHERE batch_id = ? AND NOT EXISTS (SELECT 1 FROM"
+                    " executions e WHERE e.request_id = requests.id AND e.model = ?)"
+                    " ORDER BY position",
+                    (batch_id, model),
+                )
+            ]
+            for request_id in missing:
+                position = self._db.execute(
+                    "SELECT COUNT(*) FROM executions WHERE request_id = ?", (request_id,)
+                ).fetchone()[0]
+                self._db.execute(
+                    "INSERT INTO executions (id, request_id, position, model, status, created_at)"
+                    " VALUES (?,?,?,?,'queued',?)",
+                    (_id(), request_id, position, model, _now()),
+                )
+            marks = ",".join("?" * len(RESUMABLE_CODES))
+            requeued = [
+                row["request_id"]
+                for row in self._db.execute(
+                    "UPDATE executions SET status='queued', error_code=NULL, error_detail=NULL,"
+                    " started_at=NULL, finished_at=NULL, thinking=NULL, queue_wait_ms=NULL,"
+                    " execution_ms=NULL, metrics=NULL, warnings='[]'"
+                    f" WHERE model = ? AND status='failed' AND error_code IN ({marks})"
+                    " AND request_id IN (SELECT id FROM requests WHERE batch_id = ?)"
+                    " RETURNING request_id",
+                    (model, *RESUMABLE_CODES, batch_id),
+                )
+            ]
+        return list(dict.fromkeys(missing + requeued))
+
+    def tool_coverage(self) -> dict[str, dict[str, dict]]:
+        """model -> tool run id -> cases passed, wrong, failed and waiting."""
+        coverage: dict[str, dict[str, dict]] = defaultdict(dict)
+        for row in self._db.execute(
+            """
+            SELECT model, run_id,
+              SUM(status = 'completed' AND passed = 1) AS passed,
+              SUM(status = 'completed' AND passed = 0) AS wrong,
+              SUM(status = 'failed') AS failed,
+              SUM(status IN ('queued','running')) AS waiting
+            FROM tool_results GROUP BY model, run_id
+            """
+        ):
+            coverage[row["model"]][row["run_id"]] = {
+                k: row[k] for k in ("passed", "wrong", "failed", "waiting")
+            }
+        return coverage
+
+    def add_model_to_tool_run(self, run_id: str, model: str, cases: list[tuple[str, str]]) -> int:
+        """Queue `model` on every case of the run it lacks, plus its failures caused
+        by the environment. Returns how many cases were queued."""
+        with self._transaction():
+            run = self._db.execute("SELECT models FROM tool_runs WHERE id = ?", (run_id,))
+            models = json.loads(run.fetchone()["models"])
+            if model not in models:
+                self._db.execute(
+                    "UPDATE tool_runs SET models = ? WHERE id = ?",
+                    (json.dumps([*models, model]), run_id),
+                )
+            have = {
+                row["case_id"]
+                for row in self._db.execute(
+                    "SELECT case_id FROM tool_results WHERE run_id = ? AND model = ?",
+                    (run_id, model),
+                )
+            }
+            position = self._db.execute(
+                "SELECT COALESCE(MAX(position), -1) + 1 FROM tool_results WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()[0]
+            added = 0
+            for case_id, category in cases:
+                if case_id in have:
+                    continue
+                self._db.execute(
+                    "INSERT INTO tool_results (id, run_id, case_id, category, model,"
+                    " position, status) VALUES (?,?,?,?,?,?, 'queued')",
+                    (_id(), run_id, case_id, category, model, position),
+                )
+                position += 1
+                added += 1
+            marks = ",".join("?" * len(RESUMABLE_CODES))
+            requeued = self._db.execute(
+                "UPDATE tool_results SET status='queued', error_code=NULL, error_detail=NULL,"
+                " finished_at=NULL WHERE run_id = ? AND model = ? AND status='failed'"
+                f" AND error_code IN ({marks})",
+                (run_id, model, *RESUMABLE_CODES),
+            ).rowcount
+        return added + requeued
+
+    def latest_tool_run(self, suite: str) -> str | None:
+        row = self._db.execute(
+            "SELECT id FROM tool_runs WHERE suite = ? ORDER BY created_at DESC LIMIT 1", (suite,)
+        ).fetchone()
+        return row["id"] if row else None
 
     # ---- reading ----
 
@@ -522,6 +845,8 @@ class Store:
             )
         }
         for row in rows:
+            if row["model"] in self.hidden:
+                continue
             data = dict(row)
             data.pop("position")
             data["think"] = None if data["think"] is None else bool(data["think"])
@@ -557,8 +882,11 @@ class Store:
         ).fetchall()
         executions = self._executions_for([row["id"] for row in rows])
         decisions = self._decisions_for([row["id"] for row in rows])
+        only_hidden = self._only_hidden([row["id"] for row in rows], executions)
         records = []
         for row in rows:
+            if row["id"] in only_hidden:
+                continue
             data = dict(row)
             data.pop("position")
             data["think"] = None if data["think"] is None else bool(data["think"])
@@ -571,6 +899,22 @@ class Store:
                 )
             )
         return records
+
+    def _only_hidden(self, request_ids: list[str], visible: dict) -> set[str]:
+        """Requests whose every answer came from a hidden model: shown nowhere."""
+        candidates = [r for r in request_ids if not visible.get(r)]
+        if not self.hidden or not candidates:
+            return set()
+        marks = ",".join("?" * len(candidates))
+        hidden = ",".join("?" * len(self.hidden))
+        return {
+            row["request_id"]
+            for row in self._db.execute(
+                f"SELECT DISTINCT request_id FROM executions WHERE request_id IN ({marks})"
+                f" AND model IN ({hidden})",
+                (*candidates, *self.hidden),
+            )
+        }
 
     def get_request(self, request_id: str) -> RequestRecord | None:
         found = self._requests("id = ?", (request_id,), "created_at")
@@ -601,7 +945,8 @@ class Store:
         if row is None:
             return None
         request = self.get_request(row["request_id"])
-        return next(e for e in request.executions if e.id == execution_id), request
+        execution = next((e for e in request.executions if e.id == execution_id), None)
+        return None if execution is None else (execution, request)
 
     def ancestors(self, execution_id: str) -> list[tuple[RequestRecord, Execution]]:
         """The conversation from its first prompt down to this answer, oldest first."""
@@ -632,12 +977,14 @@ class Store:
             f"SELECT * FROM batches WHERE {where} ORDER BY created_at DESC", params
         ).fetchall()
         summaries = []
+        hidden = tuple(self.hidden)
+        not_hidden = f" AND e.model NOT IN ({','.join('?' * len(hidden))})" if hidden else ""
         for batch in batches:
             counts = dict.fromkeys(("queued", "running", "completed", "failed"), 0)
             for row in self._db.execute(
                 "SELECT e.status, COUNT(*) AS n FROM executions e JOIN requests r"
-                " ON r.id = e.request_id WHERE r.batch_id = ? GROUP BY e.status",
-                (batch["id"],),
+                f" ON r.id = e.request_id WHERE r.batch_id = ?{not_hidden} GROUP BY e.status",
+                (batch["id"], *hidden),
             ):
                 counts[row["status"]] = row["n"]
             request_count = self._db.execute(
@@ -646,15 +993,15 @@ class Store:
             evaluated = self._db.execute(
                 "SELECT COUNT(DISTINCT v.execution_id) FROM evaluations v"
                 " JOIN executions e ON e.id = v.execution_id"
-                " JOIN requests r ON r.id = e.request_id WHERE r.batch_id = ?",
-                (batch["id"],),
+                f" JOIN requests r ON r.id = e.request_id WHERE r.batch_id = ?{not_hidden}",
+                (batch["id"], *hidden),
             ).fetchone()[0]
             summaries.append(
                 BatchSummary(
                     id=batch["id"],
                     name=batch["name"],
                     created_at=batch["created_at"],
-                    models=json.loads(batch["models"]),
+                    models=[m for m in json.loads(batch["models"]) if m not in self.hidden],
                     request_count=request_count,
                     counts=counts,
                     evaluated_count=evaluated,

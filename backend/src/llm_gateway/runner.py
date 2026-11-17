@@ -96,6 +96,14 @@ class Runner:
         )
 
     async def _run_all(self, requests: list[RequestRecord], shadow_route: bool) -> None:
+        # Batches (the only callers with shadow routing) run one whole job at a time.
+        if shadow_route:
+            async with self._queue.long_jobs:
+                await self._run_all_now(requests, shadow_route)
+        else:
+            await self._run_all_now(requests, shadow_route)
+
+    async def _run_all_now(self, requests: list[RequestRecord], shadow_route: bool) -> None:
         try:
             pairs = await self._route(requests, shadow_route)
             # Group by model, so 10 prompts on 4 models cost 4 model loads, not 40.

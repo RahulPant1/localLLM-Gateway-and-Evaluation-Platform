@@ -12,6 +12,8 @@ from llm_gateway.providers.base import (
     LoadedModel,
     ModelInfo,
     ModelProvider,
+    ToolCall,
+    ToolTurn,
 )
 
 
@@ -26,7 +28,10 @@ class FakeProvider(ModelProvider):
             if models is not None
             else [
                 ModelInfo(
-                    name="small:1b", size_bytes=1_000, capabilities=["completion"], num_ctx=4096
+                    name="small:1b",
+                    size_bytes=1_000,
+                    capabilities=["completion", "tools"],
+                    num_ctx=4096,
                 ),
                 ModelInfo(
                     name="thinker:8b",
@@ -48,6 +53,13 @@ class FakeProvider(ModelProvider):
         self.classifier_answer = '{"category": "general_qa", "complexity": "low"}'
         self.classifier_calls = 0
         self.list_calls = 0
+        # Tool-calling: what the fake model "calls" for a user message (default: nothing).
+        self.tool_calls_for: dict[str, list[ToolCall]] = {}
+        self.chat_messages: list[list[dict]] = []
+        # Every generation in order: ("generate" | "chat", model).
+        self.timeline: list[tuple[str, str]] = []
+        # What the fake model writes as its answer text for a user message.
+        self.content_for: dict[str, str] = {}
 
     async def version(self) -> str:
         if self.error:
@@ -69,6 +81,22 @@ class FakeProvider(ModelProvider):
             raise self.error
         return list(self.loaded)
 
+    async def chat(self, messages, tools, model, *, think=None, max_tokens=None, temperature=None):
+        if self.error:
+            raise self.error
+        self.chat_messages.append(messages)
+        self.timeline.append(("chat", model.name))
+        await asyncio.sleep(self.delay)
+        return ToolTurn(
+            model=model.name,
+            content=self.content_for.get(messages[-1]["content"], ""),
+            tool_calls=self.tool_calls_for.get(messages[-1]["content"], []),
+            num_ctx=model.num_ctx,
+            prompt_tokens=11,
+            output_tokens=4,
+            done_reason="stop",
+        )
+
     async def generate(
         self, request: GenerationRequest, model: ModelInfo, on_delta=None
     ) -> GenerationResult:
@@ -86,6 +114,7 @@ class FakeProvider(ModelProvider):
         finally:
             self.running -= 1
         self.calls.append(model.name)
+        self.timeline.append(("generate", model.name))
         self.requests.append(request)
         answer = f"echo: {request.prompt}"
         if on_delta:
